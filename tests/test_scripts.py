@@ -77,6 +77,29 @@ def test_wait_for_login_times_out():
     assert len(page.waits) == 3
 
 
+def test_launch_visible_browser_falls_back_through_channels():
+    tried = []
+
+    class Chromium:
+        def launch(self, headless, channel=None):
+            tried.append(channel)
+            if channel != "msedge":
+                raise RuntimeError("spawn UNKNOWN")
+            return "edge-browser"
+
+    assert naver.launch_visible_browser(Chromium()) == "edge-browser"
+    assert tried == ["chrome", "msedge"]
+
+
+def test_launch_visible_browser_reports_last_error():
+    class Broken:
+        def launch(self, headless, channel=None):
+            raise RuntimeError(f"no {channel}")
+
+    with pytest.raises(RuntimeError, match="no None"):
+        naver.launch_visible_browser(Broken())
+
+
 def test_upload_secrets_without_gh_cli_reports_all_failed():
     def missing(*args, **kwargs):
         raise FileNotFoundError("gh")

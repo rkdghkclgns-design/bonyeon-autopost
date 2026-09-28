@@ -87,11 +87,22 @@ def wait_for_login(context, page, timeout_s: float, poll_ms: int = 2000) -> bool
     return False
 
 
+def launch_visible_browser(chromium):
+    """설치된 크롬 → 엣지 → Playwright 내장 크롬 순으로 창을 띄운다 (PC 보안정책에 따라 내장 크롬이 막히는 경우 대비)."""
+    last_error: Exception | None = None
+    for channel in ("chrome", "msedge", None):
+        try:
+            return chromium.launch(headless=False, **({"channel": channel} if channel else {}))
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"브라우저 창을 열 수 없습니다: {last_error}")
+
+
 def capture_session(timeout_s: float) -> tuple[dict, str | None]:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=False)
+        browser = launch_visible_browser(playwright.chromium)
         context = browser.new_context(locale="ko-KR")
         page = context.new_page()
         page.goto(LOGIN_URL)
