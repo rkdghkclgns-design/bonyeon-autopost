@@ -61,6 +61,12 @@ def has_login_cookies(cookies) -> bool:
     return REQUIRED_COOKIES <= {cookie.get("name") for cookie in cookies}
 
 
+def is_persistent_login(cookies) -> bool:
+    """'로그인 상태 유지'를 체크하면 NID_AUT 에 만료일이 붙는다 — 없으면 브라우저를 닫는 순간 끊기는 세션."""
+    auth = next((c for c in cookies if c.get("name") == "NID_AUT"), None)
+    return bool(auth) and (auth.get("expires") or -1) > 0
+
+
 def wait_for_login(context, page, timeout_s: float, poll_ms: int = 2000) -> bool:
     """사용자가 창에서 로그인을 마칠 때까지(로그인 쿠키가 생길 때까지) 기다린다."""
     for _ in range(max(1, int(timeout_s * 1000 / poll_ms))):
@@ -106,6 +112,11 @@ def main() -> int:
     state, found_id = capture_session(args.timeout)
     if not has_login_cookies(state.get("cookies", [])):
         print("❌ 로그인이 확인되지 않았습니다 (시간 초과 또는 창을 닫음). 다시 실행하세요.")
+        return 1
+
+    if not is_persistent_login(state.get("cookies", [])):
+        print("❌ '로그인 상태 유지'가 체크되지 않아 곧 끊기는 로그인입니다 (자동 발행에 쓸 수 없음).")
+        print("   다시 실행해서 로그인 화면의 '로그인 상태 유지'를 꼭 체크하고 로그인하세요.")
         return 1
 
     blog_id = args.blog_id or found_id

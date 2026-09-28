@@ -77,6 +77,9 @@ def build_blog_html(
     parts: list[str] = []
     if header_url:
         parts.append(_img(header_url, "업체 로고"))
+    if comparison_url:  # 헤더 바로 아래 전후 비교 — 글을 열자마자 결과 사진이 보이도록
+        parts.append(_img(comparison_url, "작업 전후 비교"))
+        parts.append(_paragraphs(COMPARISON_CAPTION, CAPTION_STYLE))
     parts.append(_paragraphs(content.intro))
 
     for stage in STAGES:
@@ -85,9 +88,6 @@ def build_blog_html(
         if urls or section is not None:
             parts.extend(_section_html(stage, urls, section))
 
-    if comparison_url:
-        parts.append(_img(comparison_url, "작업 전후 비교"))
-        parts.append(_paragraphs(COMPARISON_CAPTION, CAPTION_STYLE))
     if review_urls:
         parts.append(f'<h3 style="{QUOTE_STYLE}">“ {html.escape(REVIEW_HEADING)} ”</h3>')
         for url in review_urls:

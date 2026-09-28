@@ -38,9 +38,12 @@ def test_each_sentence_is_a_separate_paragraph():
 
 
 
-def test_comparison_image_goes_before_outro():
-    html = build_blog_html(_content(), {"작업전": ["https://img/b"]}, comparison_url="https://img/cmp")
-    assert html.index("img/b") < html.index("img/cmp") < html.index("작업 전(좌) · 작업 후(우)") < html.index("상담은")
+def test_comparison_image_goes_right_after_header():
+    html = build_blog_html(_content(), {"작업전": ["https://img/b"]}, header_url="https://img/h",
+                           comparison_url="https://img/cmp")
+    # 헤더 → 전후 비교 → 인사말 → 단계 사진 (글을 열자마자 결과 사진이 보이도록)
+    assert html.index("img/h") < html.index("img/cmp") < html.index("작업 전(좌) · 작업 후(우)")         < html.index("안녕하세요") < html.index("img/b")
+    assert html.count("img/cmp") == 1
 
 
 def test_reviews_and_tips_sections_order():

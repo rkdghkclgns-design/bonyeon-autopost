@@ -51,13 +51,18 @@ class NaverSelectors:
     tag_input: str = "input[class*='tag_input']"
     confirm_publish: str = "button[class*='confirm_btn']"
     save_button: str = "button[class*='save_btn']"
+    # 정렬 버튼 (에디터 개편으로 없으면 Ctrl+E 로 대신) — 실제 글쓰기 화면에서 확인 후 조정
+    align_center: str = "button[data-name='align-center'], button[class*='align-center']"
 
 
 @dataclass(frozen=True)
 class NaverBlock:
-    kind: str  # "text" | "image"
+    kind: str  # "text" | "image" | "heading"(강조 소제목)
     text: str = ""
     image: Path | None = None
+
+
+HEADING_RULE = "━━━━━━━━━━━━━━━━"  # 소제목 위·아래 줄 (구글 블로그 인용 박스와 비슷한 강조)
 
 
 COMPARISON_CAPTION = "작업 전(좌) · 작업 후(우)"
@@ -75,6 +80,9 @@ def build_blocks(
     blocks: list[NaverBlock] = []
     if header is not None:
         blocks.append(NaverBlock("image", image=header))
+    if comparison is not None:  # 헤더 바로 아래 전후 비교 — 글을 열자마자 결과 사진이 보이도록
+        blocks.append(NaverBlock("image", image=comparison))
+        blocks.append(NaverBlock("text", text=COMPARISON_CAPTION))
     blocks.append(NaverBlock("text", text=content.intro))
     for stage in STAGES:
         images = images_by_stage.get(stage, ())
@@ -82,7 +90,7 @@ def build_blocks(
         if not images and section is None:
             continue
         heading = section.heading if section else STAGE_LABELS[stage]
-        blocks.append(NaverBlock("text", text=f"“ {heading} ”"))
+        blocks.append(NaverBlock("heading", text=f"“ {heading} ”"))
         if section:
             blocks.append(NaverBlock("text", text=section.body))
         for index, path in enumerate(images):
@@ -90,15 +98,12 @@ def build_blocks(
             caption = section.caption_for(index) if section else ""
             if caption:
                 blocks.append(NaverBlock("text", text=caption))
-    if comparison is not None:
-        blocks.append(NaverBlock("image", image=comparison))
-        blocks.append(NaverBlock("text", text=COMPARISON_CAPTION))
     if reviews:
-        blocks.append(NaverBlock("text", text=f"“ {REVIEW_HEADING} ”"))
+        blocks.append(NaverBlock("heading", text=f"“ {REVIEW_HEADING} ”"))
         blocks.extend(NaverBlock("image", image=path) for path in reviews)
         blocks.append(NaverBlock("text", text=REVIEW_CAPTION))
     if content.tips:
-        blocks.append(NaverBlock("text", text=f"“ {tips_heading(content)} ”"))
+        blocks.append(NaverBlock("heading", text=f"“ {tips_heading(content)} ”"))
         blocks.append(NaverBlock("text", text=content.tips))
     blocks.append(NaverBlock("text", text=content.outro))
     if footer is not None:
@@ -216,9 +221,12 @@ class NaverPublisher:
         editor.locator(self._sel.title).first.click()
         page.keyboard.insert_text(content.title)
         editor.locator(self._sel.body_paragraph).first.click()
+        self._align_center(page, editor)
         for block in blocks:
             if block.kind == "image" and block.image is not None:
                 self._insert_image(page, editor, block.image)
+            elif block.kind == "heading":
+                self._type_heading(page, block.text)
             else:
                 self._type_text(page, block.text)
         return self._finish(page, editor, content.hashtags)
@@ -232,6 +240,30 @@ class NaverPublisher:
                     page.wait_for_timeout(500)
                 except Exception as exc:
                     log.debug("팝업 닫기 무시: %s", exc)
+
+    def _align_center(self, page, editor) -> None:
+        """본문 가운데 정렬 — 정렬 버튼이 있으면 누르고, 없으면 단축키(Ctrl+E)로 시도."""
+        try:
+            button = editor.locator(self._sel.align_center)
+            if button.count():
+                button.first.click(timeout=3000)
+            else:
+                page.keyboard.press("Control+e")
+        except Exception as exc:  # 정렬 실패는 발행을 막지 않는다
+            log.warning("가운데 정렬 설정 실패 (왼쪽 정렬로 진행): %s", exc)
+
+    @staticmethod
+    def _type_heading(page, text: str) -> None:
+        """소제목 강조: 위아래 줄 + 굵은 글씨 (에디터 기능 대신 입력만으로 — 화면 구조 변경에 강함)."""
+        page.keyboard.insert_text(HEADING_RULE)
+        page.keyboard.press("Enter")
+        page.keyboard.press("Control+b")
+        page.keyboard.insert_text(text.strip())
+        page.keyboard.press("Control+b")
+        page.keyboard.press("Enter")
+        page.keyboard.insert_text(HEADING_RULE)
+        page.keyboard.press("Enter")
+        page.keyboard.press("Enter")
 
     @staticmethod
     def _type_text(page, text: str) -> None:

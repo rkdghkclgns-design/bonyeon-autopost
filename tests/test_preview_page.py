@@ -18,7 +18,7 @@ def test_preview_embeds_every_image_and_escapes_text(tmp_path):
     srcs = re.findall(r'src="([^"]+)"', page)
     assert len(srcs) == 4 and all(s.startswith("data:image/jpeg;base64,") for s in srcs)  # 사진2+헤더+비교
     assert "<title>&lt;b&gt;제목&lt;/b&gt; &amp; 현장</title>" in page
-    assert "캡션 &lt;script&gt;" in page and "<script>" not in page
+    assert "캡션" not in page and "<script>" not in page  # 틱톡 캡션은 블로그 미리보기에 넣지 않음
     assert '<div class="note">검토용</div>' in page
 
 
@@ -46,6 +46,8 @@ def test_naver_preview_follows_editor_blocks_line_by_line(tmp_path):
     page = render_naver_preview(content, photos, header=header, footer=footer, blog="blog.naver.com/evbank")
     assert page.count("data:image/jpeg") == 4  # 헤더 + 사진 2 + 푸터
     assert page.index("data:image") < page.index("안녕하세요")  # 헤더가 맨 위
-    assert "<p>“ 작업전 모습 ”</p>" in page  # 소제목은 인용 문장으로 입력됨
+    assert '<p class="heading">“ 작업전 모습 ”</p>' in page  # 소제목 강조 (위아래 줄 + 굵게)
+    assert page.count('<p class="rule">') == 2 * 4  # 작업전·중·후·관리TIP 소제목마다 위아래 줄
+    assert '.body {{ text-align:center; }}'.replace("{{", "{").replace("}}", "}") in page  # 가운데 정렬
     assert "<p>&nbsp;</p>" in page  # 빈 줄 = 빈 문단
     assert "<span>#로프청소</span>" in page and "blog.naver.com/evbank" in page

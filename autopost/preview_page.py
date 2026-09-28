@@ -27,14 +27,11 @@ PAGE = """<!doctype html>
   main {{ max-width:720px; margin:0 auto; background:#fff; padding:24px 16px 48px; }}
   h1 {{ font-size:1.45em; line-height:1.4; text-align:center; margin:8px 0 24px; }}
   .note {{ background:#fff8e1; border:1px solid #f0d58a; border-radius:8px; padding:10px 14px; font-size:.9em; margin-bottom:20px; }}
-  .tiktok {{ margin-top:32px; background:#111; color:#fff; border-radius:10px; padding:16px; white-space:pre-wrap; line-height:1.7; }}
 </style></head>
 <body><main>
 <div class="note">{note}</div>
 <h1>{title}</h1>
 {body}
-<div class="tiktok"><b>틱톡 캡션</b>
-{tiktok}</div>
 </main></body></html>
 """
 
@@ -64,10 +61,7 @@ def render_preview(
     body = build_blog_html(
         content, urls, uri(header), uri(footer), uri(comparison), tuple(data_uri(p) for p in reviews)
     )
-    return PAGE.format(
-        title=html.escape(content.title), note=html.escape(note), body=body,
-        tiktok=html.escape(content.tiktok_caption),
-    )
+    return PAGE.format(title=html.escape(content.title), note=html.escape(note), body=body)
 
 
 def write_preview(out_path: Path, *args, **kwargs) -> Path:
@@ -87,8 +81,11 @@ NAVER_PAGE = """<!doctype html>
   .note {{ background:#fff8e1; border:1px solid #f0d58a; border-radius:8px; padding:10px 14px; font-size:.9em; margin-bottom:20px; }}
   h1 {{ font-size:1.6em; line-height:1.4; margin:4px 0 8px; font-weight:normal; }}
   .meta {{ color:#999; font-size:.85em; border-bottom:1px solid #eee; padding-bottom:16px; margin-bottom:28px; }}
+  .body {{ text-align:center; }}
   p {{ margin:0; font-size:16px; line-height:1.8; min-height:1.8em; }}
-  img {{ display:block; max-width:100%; margin:12px 0; }}
+  p.rule {{ color:#146c94; letter-spacing:-1px; }}
+  p.heading {{ font-weight:bold; font-size:17px; }}
+  img {{ display:block; max-width:100%; margin:12px auto; }}
   .tags {{ margin-top:36px; border-top:1px solid #eee; padding-top:16px; }}
   .tags span {{ display:inline-block; color:#03c75a; margin:0 10px 8px 0; font-size:.95em; }}
 </style></head>
@@ -96,7 +93,9 @@ NAVER_PAGE = """<!doctype html>
 <div class="note">{note}</div>
 <h1>{title}</h1>
 <div class="meta">{blog} · 에디터에 입력되는 순서·줄바꿈 그대로</div>
+<div class="body">
 {body}
+</div>
 <div class="tags">{tags}</div>
 </main></body></html>
 """
@@ -112,14 +111,18 @@ def render_naver_preview(
     note: str = "미리보기 — 아직 어디에도 게시되지 않았습니다.",
     blog: str = "네이버 블로그",
 ) -> str:
-    """네이버 스마트에디터에 들어가는 블록(글 한 줄 = 한 문단, 빈 줄 = 빈 문단) 순서 그대로 보여준다."""
-    from .naver_publisher import build_blocks  # 네이버 모듈은 필요할 때만
+    """네이버 스마트에디터에 들어가는 블록(가운데 정렬, 글 한 줄 = 한 문단, 빈 줄 = 빈 문단) 순서 그대로 보여준다."""
+    from .naver_publisher import HEADING_RULE, build_blocks  # 네이버 모듈은 필요할 때만
 
     parts: list[str] = []
     for block in build_blocks(content, photos_by_stage, header, footer, comparison, reviews):
         if block.kind == "image" and block.image is not None:
             if block.image.is_file():
                 parts.append(f'<img src="{data_uri(block.image)}" alt="">')
+            continue
+        if block.kind == "heading":  # 발행 시 입력과 같게: 줄 / 굵은 소제목 / 줄 / 빈 줄
+            rule = f'<p class="rule">{HEADING_RULE}</p>'
+            parts += [rule, f'<p class="heading">{html.escape(block.text.strip())}</p>', rule, "<p>&nbsp;</p>"]
             continue
         for line in block.text.split("\n"):  # 발행 시 줄마다 Enter — 빈 줄은 빈 문단
             parts.append(f"<p>{html.escape(line.strip())}</p>" if line.strip() else "<p>&nbsp;</p>")

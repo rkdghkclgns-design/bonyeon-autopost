@@ -204,3 +204,9 @@ def test_set_secret_asks_with_masked_prompt_and_hint():
 @pytest.mark.parametrize("name,ok", [("GEMINI_API_KEY", True), ("gemini", False), ("A;rm -rf", False), ("AB", False)])
 def test_set_secret_name_validation(name, ok):
     assert bool(set_secret.NAME_RE.match(name)) is ok
+
+
+def test_persistent_login_requires_keep_login_expiry():
+    assert naver.is_persistent_login([{"name": "NID_AUT", "expires": 1893456000}]) is True
+    assert naver.is_persistent_login([{"name": "NID_AUT", "expires": -1}]) is False  # 로그인 상태 유지 미체크
+    assert naver.is_persistent_login([{"name": "NID_SES", "expires": 1893456000}]) is False
