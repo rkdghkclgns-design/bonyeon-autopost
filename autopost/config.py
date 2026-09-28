@@ -23,6 +23,13 @@ TIKTOK_PRIVACY_LEVELS = (
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 # 기본 모델이 과부하(503)·중단(404)일 때 순서대로 시도
 DEFAULT_GEMINI_FALLBACKS = "gemini-3.8-flash,gemini-3.5-flash,gemini-3-flash-preview"
+# 진행 단계별 슬랙 채널 (비우면 그 단계 결과물은 알림 채널의 진행 메시지 스레드에 올라감)
+STAGE_CHANNEL_ENV = (
+    ("prepare", "SLACK_CHANNEL_PHOTOS"),  # 사진 모음·전후 비교
+    ("draft", "SLACK_CHANNEL_DRAFT"),  # AI 원고
+    ("video", "SLACK_CHANNEL_VIDEO"),  # 틱톡 영상
+    ("publish", "SLACK_CHANNEL_PUBLISH"),  # 발행 결과·수동 발행용 초안
+)
 
 
 class ConfigError(ValueError):
@@ -63,6 +70,7 @@ class Config:
     min_photos: int
     video_seconds: float
     output_dir: Path
+    slack_stage_channels: tuple[tuple[str, str], ...] = ()  # (진행 단계, 채널 ID)
 
     @property
     def blogger_enabled(self) -> bool:
@@ -179,6 +187,9 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         min_photos=_get_int(source, "MIN_PHOTOS", 3, 1, 30),
         video_seconds=_get_float(source, "VIDEO_SECONDS", 15.0, 3.0, 60.0),
         output_dir=Path(_get(source, "OUTPUT_DIR", "output")),
+        slack_stage_channels=tuple(
+            (stage, _get(source, key)) for stage, key in STAGE_CHANNEL_ENV if _get(source, key)
+        ),
     )
 
 

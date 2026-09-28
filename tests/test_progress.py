@@ -127,6 +127,46 @@ def test_first_post_failure_switches_to_line_mode_instead_of_reposting_checklist
     assert reporter.fail_current("x") == "사진 정리·전후 비교"
 
 
+def test_stage_outputs_go_to_stage_channels_with_run_label_and_pointer(tmp_path):
+    client = FakeWebClient()
+    reporter = ProgressReporter(
+        SlackNotifier(channel_id="C_MAIN", client=client), "🧹 진행 중", [],
+        stage_channels={"prepare": "C_PHOTO", "publish": "C_PUB"}, run_label="정기청소 · 09/28 16:05",
+    )
+    reporter.start()
+    image = tmp_path / "a.jpg"
+    image.write_bytes(b"x")
+    reporter.file(image, "사진", "📸 사진", stage="prepare")
+    reporter.file(image, "비교", "🖼️ 비교", stage="prepare")  # 같은 단계 안내는 한 번만
+    reporter.file(image, "원고", "📝 원고", stage="draft")  # 채널 미설정 → 스레드
+    reporter.note("결과", [{"type": "divider"}], stage="publish")
+
+    ts = reporter.thread_ts
+    uploads = {u["title"]: u for u in client.uploads}
+    assert uploads["사진"]["channel"] == "C_PHOTO" and uploads["사진"]["thread_ts"] is None
+    assert uploads["사진"]["initial_comment"] == "[정기청소 · 09/28 16:05] 📸 사진"
+    assert uploads["원고"]["channel"] == "C_MAIN" and uploads["원고"]["thread_ts"] == ts
+    result = next(m for m in client.messages if m.get("channel") == "C_PUB")
+    assert result["text"] == "[정기청소 · 09/28 16:05] 결과"
+    assert result["blocks"][0]["elements"][0]["text"] == "🧹 정기청소 · 09/28 16:05"
+    pointers = [m["text"] for m in client.thread(ts)]
+    assert pointers == ["📸 사진·전후 비교 → <#C_PHOTO>", "📊 발행 결과 → <#C_PUB>"]
+
+
+def test_stage_channels_ignored_without_bot_token(tmp_path):
+    class Hook:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, **kwargs):
+            self.sent.append(kwargs["text"])
+
+    hook = Hook()
+    reporter = ProgressReporter(SlackNotifier(webhook=hook), "🧹 진행 중", [], stage_channels={"publish": "C_PUB"})
+    reporter.note("결과", stage="publish")
+    assert hook.sent == ["결과"]  # 웹훅은 채널을 바꿀 수 없어 기본 채널로
+
+
 def test_slack_update_failure_does_not_break_reporting():
     client = FakeWebClient(fail_update=True)
     reporter = ProgressReporter(SlackNotifier(channel_id="C1", client=client), "🧹 진행 중", [])

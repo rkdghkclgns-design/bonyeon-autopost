@@ -165,9 +165,16 @@ class SlackNotifier:
         """메시지 수정·스레드·파일 업로드는 봇 토큰이 있어야 가능 (웹훅은 새 메시지만)."""
         return self._client is not None
 
-    def post(self, text: str, blocks: list[dict] | None = None, thread_ts: str | None = None) -> str | None:
+    def post(
+        self,
+        text: str,
+        blocks: list[dict] | None = None,
+        thread_ts: str | None = None,
+        channel: str | None = None,
+    ) -> str | None:
         """봇으로 보내고(성공 시 메시지 ts 반환), 봇이 없거나 실패하면 웹훅으로 보낸다.
 
+        channel 을 주면 기본 알림 채널 대신 그 채널(단계별 채널)로 보낸다.
         슬랙 장애가 자동화를 멈추지 않도록 예외는 삼킨다.
         """
         text, blocks = self._clean(text), self._clean_blocks(blocks)
@@ -175,7 +182,7 @@ class SlackNotifier:
         if self._client is not None:
             try:
                 response = self._client.chat_postMessage(
-                    channel=self._channel_id, text=text, blocks=blocks, thread_ts=thread_ts
+                    channel=channel or self._channel_id, text=text, blocks=blocks, thread_ts=thread_ts
                 )
                 return (response or {}).get("ts")
             except Exception as exc:
@@ -203,13 +210,20 @@ class SlackNotifier:
             log.error("슬랙 메시지 수정 실패: %s", exc)
             return False
 
-    def upload_file(self, path: Path, title: str, comment: str = "", thread_ts: str | None = None) -> bool:
+    def upload_file(
+        self,
+        path: Path,
+        title: str,
+        comment: str = "",
+        thread_ts: str | None = None,
+        channel: str | None = None,
+    ) -> bool:
         if self._client is None:
             log.info("[슬랙] 봇 토큰이 없어 파일 업로드를 건너뜁니다: %s", path.name)
             return False
         try:
             self._client.files_upload_v2(
-                channel=self._channel_id, file=str(path), title=title,
+                channel=channel or self._channel_id, file=str(path), title=title,
                 initial_comment=self._clean(comment), thread_ts=thread_ts,
             )
             return True

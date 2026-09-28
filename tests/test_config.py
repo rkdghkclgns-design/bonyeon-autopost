@@ -104,3 +104,9 @@ def test_readiness_lists_all_integrations():
     names = [name for name, _, _ in items]
     assert names == ["구글 드라이브", "Gemini AI", "구글 블로그", "네이버 블로그", "틱톡", "슬랙"]
     assert dict((n, ok) for n, ok, _ in items)["Gemini AI"] is True
+
+
+def test_stage_channels_only_include_configured_ones():
+    cfg = load_config({"SLACK_CHANNEL_PHOTOS": "C1", "SLACK_CHANNEL_VIDEO": " ", "SLACK_CHANNEL_PUBLISH": "C4"})
+    assert dict(cfg.slack_stage_channels) == {"prepare": "C1", "publish": "C4"}
+    assert load_config({}).slack_stage_channels == ()

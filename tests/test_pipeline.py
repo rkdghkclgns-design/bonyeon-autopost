@@ -186,7 +186,7 @@ def test_partial_failure_sends_manual_fallbacks(world):
     ts = _progress_ts(client)
     thread_texts = [m["text"] for m in client.thread(ts)]
     assert any("네이버 블로그 수동 발행용 초안" in t for t in thread_texts)
-    assert any("틱톡은 이 스레드의 영상을 수동 업로드" in t for t in thread_texts)
+    assert any("틱톡은 만들어 둔 영상을 수동 업로드" in t for t in thread_texts)
     assert "틱톡 영상" in _upload_titles(client, ts)
     assert "블로그·틱톡 발행 — 구글 블로그 ✅ · 네이버 블로그 ❌ · 틱톡 ❌" in _checklist(client, ts)
     _, names = _archive_children(drive, layout)

@@ -361,9 +361,11 @@ def _meta_lines(category: str, area, options: RunOptions, now: datetime) -> list
 def _thread_fallbacks(reporter: ProgressReporter, results: Sequence[PublishResult], content: PostContent) -> None:
     failed = {r.platform for r in results if not r.ok and not r.skipped}
     if naver_publisher.PLATFORM in failed:
-        reporter.note(f"📝 네이버 블로그 수동 발행용 초안 (위 원고 파일과 같음)\n\n{content.plain_text()}")
+        reporter.note(f"📝 네이버 블로그 수동 발행용 초안 (원고 파일과 같음)\n\n{content.plain_text()}",
+                      stage="publish")
     if tiktok_publisher.PLATFORM in failed:
-        reporter.note(f"🎬 틱톡은 이 스레드의 영상을 수동 업로드하세요\n캡션: {content.tiktok_caption}")
+        reporter.note(f"🎬 틱톡은 만들어 둔 영상을 수동 업로드하세요\n캡션: {content.tiktok_caption}",
+                      stage="publish")
 
 
 def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
@@ -394,6 +396,8 @@ def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
     reporter = ProgressReporter(
         slack, f"🧹 {selection.category} 포스팅 진행 중{tag}",
         _meta_lines(selection.category, area, options, now), options.run_url,
+        stage_channels=dict(cfg.slack_stage_channels),
+        run_label=f"{selection.category} · {now:%m/%d %H:%M}{tag}",
     )
     reporter.start()
     reporter.step("select", "done", f"{selection.total}장 ({_stage_counts(selection)})")
@@ -429,8 +433,9 @@ def _run_steps(
     media = PostMedia(
         washed, _make_comparison(washed, workdir), _download_reviews(services, review_files, workdir)
     )
-    reporter.file(make_contact_sheet(washed, workdir / "selected.jpg"), "선택된 사진", "📸 이번 글에 쓰는 사진")
-    reporter.file(media.comparison, "전후 비교", "🖼️ 전후 비교 이미지")
+    reporter.file(make_contact_sheet(washed, workdir / "selected.jpg"), "선택된 사진", "📸 이번 글에 쓰는 사진",
+                  stage="prepare")
+    reporter.file(media.comparison, "전후 비교", "🖼️ 전후 비교 이미지", stage="prepare")
     reporter.step("prepare", "done",
                   f"전후 비교 {'O' if media.comparison else 'X'} · 고객후기 {len(media.reviews)}장")
 
@@ -439,13 +444,14 @@ def _run_steps(
     post_txt = workdir / "post.txt"
     post_txt.write_text(content.plain_text() + f"\n\n[틱톡 캡션]\n{content.tiktok_caption}\n", encoding="utf-8")
     reporter.step("draft", "done", f"본문 {content.text_length():,}자")
-    reporter.file(post_txt, "원고", f"📝 *{content.title}*\n해시태그: {' '.join(content.hashtags[:6])} …")
+    reporter.file(post_txt, "원고", f"📝 *{content.title}*\n해시태그: {' '.join(content.hashtags[:6])} …",
+                  stage="draft")
 
     reporter.step("video", "run")  # 틱톡 영상
     video_path, video_error = _make_video(services, cfg, media, assets, workdir)
     if video_path is not None:
         reporter.step("video", "done", f"{cfg.video_seconds:g}초 · 9:16")
-        reporter.file(video_path, "틱톡 영상", f"🎬 틱톡 영상\n캡션: {content.tiktok_caption}")
+        reporter.file(video_path, "틱톡 영상", f"🎬 틱톡 영상\n캡션: {content.tiktok_caption}", stage="video")
     else:
         reporter.step("video", "fail", video_error)
 
@@ -476,7 +482,7 @@ def _run_steps(
     _thread_fallbacks(reporter, results, content)
     blocks = build_report_blocks(category, content.title, results, outcome.url, outcome.moved,
                                  options.dry_run, outcome.failed)
-    reporter.note(f"🧹 [청소 자동화] {category} 포스팅 결과", blocks)
+    reporter.note(f"🧹 [청소 자동화] {category} 포스팅 결과", blocks, stage="publish")
     ok = options.dry_run or any(r.ok for r in results)
     reporter.finish(f"🧪 {category} 테스트 완료" if options.dry_run
                     else f"✅ {category} 포스팅 완료" if ok else f"❌ {category} 포스팅 실패")

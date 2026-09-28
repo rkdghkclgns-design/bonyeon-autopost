@@ -57,12 +57,33 @@ def build_progress_blocks(
     return blocks
 
 
+STAGE_OUTPUT_LABELS = {
+    "prepare": "📸 사진·전후 비교",
+    "draft": "📝 원고",
+    "video": "🎬 틱톡 영상",
+    "publish": "📊 발행 결과",
+}
+
+
 class ProgressReporter:
-    def __init__(self, slack: SlackNotifier, headline: str, meta: Sequence[str], run_url: str = "") -> None:
+    """진행 메시지(체크리스트)는 알림 채널에, 단계 결과물은 단계별 채널(없으면 진행 메시지 스레드)에 올린다."""
+
+    def __init__(
+        self,
+        slack: SlackNotifier,
+        headline: str,
+        meta: Sequence[str],
+        run_url: str = "",
+        stage_channels: Mapping[str, str] | None = None,
+        run_label: str = "",
+    ) -> None:
         self._slack = slack
         self._headline = headline
         self._meta = tuple(meta)
         self._run_url = run_url
+        self._stage_channels = dict(stage_channels or {})
+        self._run_label = run_label
+        self._pointed: set[str] = set()
         self._states: dict[str, tuple[str, str]] = {key: ("wait", "") for key, _ in STEPS}
         self._ts: str | None = None
 
@@ -106,9 +127,38 @@ class ProgressReporter:
         if self._ts:
             self._slack.update(self._ts, self._headline, self._blocks())
 
-    def note(self, text: str, blocks: list[dict] | None = None) -> None:
-        self._slack.post(text, blocks, thread_ts=self._ts)
+    def _stage_channel(self, stage: str | None) -> str | None:
+        """단계별 채널 — 봇 토큰이 있을 때만 (웹훅은 채널을 바꿀 수 없음)."""
+        return self._stage_channels.get(stage or "") if self._slack.can_thread else None
 
-    def file(self, path: Path | None, title: str, comment: str = "") -> None:
-        if path is not None and path.is_file():
+    def _tagged(self, text: str) -> str:
+        """단계별 채널에서 어느 실행의 결과물인지 알 수 있게 실행 표시를 붙인다."""
+        return f"[{self._run_label}] {text}" if self._run_label else text
+
+    def _point(self, stage: str, channel: str) -> None:
+        """진행 메시지 스레드에 '결과물은 #채널 에' 안내 (단계마다 한 번)."""
+        if stage in self._pointed:
+            return
+        self._pointed.add(stage)
+        self._slack.post(f"{STAGE_OUTPUT_LABELS.get(stage, stage)} → <#{channel}>", thread_ts=self._ts)
+
+    def note(self, text: str, blocks: list[dict] | None = None, stage: str | None = None) -> None:
+        channel = self._stage_channel(stage)
+        if channel is None:
+            self._slack.post(text, blocks, thread_ts=self._ts)
+            return
+        if blocks and self._run_label:  # 블록 메시지는 맨 위에 실행 표시 줄을 넣는다
+            blocks = [{"type": "context", "elements": [{"type": "mrkdwn", "text": f"🧹 {self._run_label}"}]},
+                      *blocks]
+        self._slack.post(self._tagged(text), blocks, channel=channel)
+        self._point(stage, channel)
+
+    def file(self, path: Path | None, title: str, comment: str = "", stage: str | None = None) -> None:
+        if path is None or not path.is_file():
+            return
+        channel = self._stage_channel(stage)
+        if channel is None:
             self._slack.upload_file(path, title, comment, thread_ts=self._ts)
+            return
+        self._slack.upload_file(path, title, self._tagged(comment), channel=channel)
+        self._point(stage, channel)
