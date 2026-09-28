@@ -77,3 +77,27 @@ def test_main_posts_only_when_due(monkeypatch, capsys):
     assert token_expiry.main([], env, date(2026, 11, 29)) == 0 and len(sent) == 2  # 2일 남음
     assert token_expiry.main(["--dry-run"], env, date(2026, 11, 29)) == 0 and len(sent) == 2
     assert "네이버" in capsys.readouterr().out
+
+
+def test_extension_report_detects_extended_unchanged_and_not_saved():
+    base = date(2026, 10, 29)
+    today = date(2026, 9, 30)
+    saved = "2026-09-30T01:12:00Z"  # KST 10:12
+    extended = token_expiry.build_extension_report(base, TokenExpiry("네이버", date(2026, 10, 30)), saved, today)
+    assert "• 이전 만료일: 2026-10-29" in extended and "• 현재 만료일: 2026-10-30" in extended
+    assert "• 로그인 정보 저장: 2026-09-30 10:12" in extended and "✅" in extended
+
+    same = token_expiry.build_extension_report(base, TokenExpiry("네이버", base), saved, today)
+    assert "❌ 만료일이 그대로입니다" in same
+
+    stale = token_expiry.build_extension_report(base, TokenExpiry("네이버", base), "2026-09-28T23:05:08Z", today)
+    assert "오늘 저장 안 됨" in stale and "⚠️" in stale
+
+
+def test_main_with_baseline_always_reports(monkeypatch):
+    sent = []
+    monkeypatch.setattr(token_expiry, "_post", lambda text, env: sent.append(text) or True)
+    env = {"NAVER_STORAGE_STATE_B64": _naver_state(datetime(2026, 10, 30, tzinfo=KST).timestamp()),
+           "NAVER_STATE_UPDATED_AT": "2026-09-30T01:12:00Z"}
+    assert token_expiry.main(["--naver-baseline", "2026-10-29"], env, date(2026, 9, 30)) == 0
+    assert len(sent) == 1 and "✅" in sent[0]

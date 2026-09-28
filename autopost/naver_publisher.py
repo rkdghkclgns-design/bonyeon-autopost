@@ -311,7 +311,7 @@ class NaverPublisher:
         return (
             f"https://blog.naver.com/{self._blog_id}",
             "⚠️ 발행 버튼은 눌렀지만 게시글 주소를 확인하지 못했습니다. 블로그에서 게시 여부를 확인하세요 "
-            "(원고는 드라이브 보관 폴더의 post.txt)",
+            "(원고는 슬랙 원고 채널의 post.txt)",
         )
 
     def _save_session(self, context) -> None:

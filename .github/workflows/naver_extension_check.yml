@@ -1,0 +1,50 @@
+name: 네이버 로그인 자동 연장 확인 (1회)
+
+# 2026-09-30 10시 발행 후, 발행하면서 저장된 새 로그인 정보로 네이버 만료일(2026-10-29)이
+# 늘어났는지 한 번 확인해 #autopost-로그인토큰-만료알림 에 보고한다. 확인이 끝나면 이 파일은 지워도 된다.
+
+on:
+  schedule:
+    - cron: "30 2 30 9 *"  # 09-30 11:30 (KST) — 10시 발행이 늦게 시작돼도 끝난 뒤
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 2026년에만 실행 (내년 같은 날 다시 보고하지 않도록)
+        id: guard
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(TZ=Asia/Seoul date +%Y)" != "2026" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip != 'true'
+      - uses: actions/setup-python@v5
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          python-version: "3.12"
+      - name: Install
+        if: steps.guard.outputs.skip != 'true'
+        run: pip install slack_sdk
+      - name: 로그인 정보 마지막 저장 시각
+        if: steps.guard.outputs.skip != 'true'
+        id: updated
+        env:
+          GH_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
+        run: |
+          at=$(gh api "repos/${{ github.repository }}/actions/secrets/NAVER_STORAGE_STATE_B64" -q .updated_at || true)
+          echo "at=$at" >> "$GITHUB_OUTPUT"
+      - name: 만료일 비교 후 보고
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          SLACK_CHANNEL_TOKEN_ALERT: ${{ vars.SLACK_CHANNEL_TOKEN_ALERT }}
+          NAVER_STORAGE_STATE_B64: ${{ secrets.NAVER_STORAGE_STATE_B64 }}
+          NAVER_STATE_UPDATED_AT: ${{ steps.updated.outputs.at }}
+        run: python -m autopost.token_expiry --naver-baseline 2026-10-29

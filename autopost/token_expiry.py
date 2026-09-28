@@ -4,6 +4,7 @@
   python -m autopost.token_expiry            # 만료 3일 이내일 때만 알림
   python -m autopost.token_expiry --force    # 만료일과 상관없이 지금 알림 (확인용)
   python -m autopost.token_expiry --dry-run  # 알림 없이 화면에만 출력
+  python -m autopost.token_expiry --naver-baseline 2026-10-29  # 발행 후 네이버 만료일이 늘었는지 보고
 
 - 네이버: 저장된 로그인 정보(NAVER_STORAGE_STATE_B64)의 NID_AUT 쿠키 만료일
 - 틱톡: 토큰 발급·갱신 때 저장해 둔 TIKTOK_REFRESH_EXPIRES_AT (refresh token 만료일)
@@ -99,6 +100,35 @@ def build_message(items: Sequence[TokenExpiry], today: date, days: int = ALERT_D
     return "\n".join(lines)
 
 
+def _saved_on(updated_at: str, today: date) -> datetime | None:
+    """GitHub 시크릿 마지막 저장 시각(UTC ISO) → KST. 오늘 저장된 게 아니면 None."""
+    try:
+        saved = datetime.fromisoformat(updated_at.strip().replace("Z", "+00:00")).astimezone(KST)
+    except ValueError:
+        return None
+    return saved if saved.date() == today else None
+
+
+def build_extension_report(baseline: date, current: TokenExpiry, updated_at: str, today: date) -> str:
+    """발행하면서 저장된 새 로그인 정보로 네이버 만료일이 늘어났는지 한 번 확인하는 보고."""
+    saved = _saved_on(updated_at, today)
+    lines = [
+        f"🔎 네이버 로그인 자동 연장 확인 ({today:%Y-%m-%d} 발행 후)",
+        f"• 이전 만료일: {baseline:%Y-%m-%d}",
+        f"• 현재 만료일: {current.expires:%Y-%m-%d}" if current.expires else "• 현재 만료일: 확인 불가",
+        f"• 로그인 정보 저장: {saved:%Y-%m-%d %H:%M}" if saved else "• 로그인 정보 저장: 오늘 저장 안 됨",
+    ]
+    if current.expires and current.expires > baseline:
+        lines.append("→ ✅ 발행할 때마다 만료일이 자동으로 늘어납니다. 매일 발행이 계속되면 다시 로그인할 필요가 없습니다.")
+    elif saved is None:
+        lines.append("→ ⚠️ 오늘 네이버 발행에서 로그인 정보가 저장되지 않아 확인하지 못했습니다. "
+                     "#autopost-4-발행결과 에서 네이버 발행 결과를 확인해 주세요.")
+    else:
+        lines.append("→ ❌ 만료일이 그대로입니다 — 자동으로 늘어나지 않습니다. "
+                     "만료 3일 전 알림이 오면 다시 로그인해 주세요 (30일마다 1번).")
+    return "\n".join(lines)
+
+
 def _post(text: str, env: Mapping[str, str]) -> bool:
     token = env.get("SLACK_BOT_TOKEN", "").strip()
     channel = (env.get("SLACK_CHANNEL_TOKEN_ALERT", "") or env.get("SLACK_CHANNEL_ID", "")).strip()
@@ -121,9 +151,18 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
     parser = argparse.ArgumentParser(description="네이버·틱톡 로그인 토큰 만료 점검")
     parser.add_argument("--force", action="store_true", help="만료일과 상관없이 알림 보내기")
     parser.add_argument("--dry-run", action="store_true", help="알림 없이 출력만")
+    parser.add_argument("--naver-baseline", default="", help="이전 네이버 만료일(YYYY-MM-DD) — 늘었는지 보고")
     args = parser.parse_args(argv)
     env = os.environ if env is None else env
     today = today or datetime.now(KST).date()
+
+    if args.naver_baseline:
+        report = build_extension_report(
+            date.fromisoformat(args.naver_baseline), naver_expiry(env.get("NAVER_STORAGE_STATE_B64", "")),
+            env.get("NAVER_STATE_UPDATED_AT", ""), today,
+        )
+        print(report)
+        return 0 if args.dry_run or _post(report, env) else 1
 
     items = collect(env)
     if not items:
