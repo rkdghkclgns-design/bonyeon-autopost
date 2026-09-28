@@ -160,14 +160,24 @@ class SlackNotifier:
             return None
         return json.loads(self._clean(json.dumps(blocks, ensure_ascii=False)))
 
-    def post(self, text: str, blocks: list[dict] | None = None) -> None:
-        """봇으로 보내고, 봇이 없거나 실패하면 웹훅으로 보낸다. 슬랙 장애가 자동화를 멈추지 않도록 예외는 삼킨다."""
+    @property
+    def can_thread(self) -> bool:
+        """메시지 수정·스레드·파일 업로드는 봇 토큰이 있어야 가능 (웹훅은 새 메시지만)."""
+        return self._client is not None
+
+    def post(self, text: str, blocks: list[dict] | None = None, thread_ts: str | None = None) -> str | None:
+        """봇으로 보내고(성공 시 메시지 ts 반환), 봇이 없거나 실패하면 웹훅으로 보낸다.
+
+        슬랙 장애가 자동화를 멈추지 않도록 예외는 삼킨다.
+        """
         text, blocks = self._clean(text), self._clean_blocks(blocks)
         log.info("[슬랙] %s", text)
         if self._client is not None:
             try:
-                self._client.chat_postMessage(channel=self._channel_id, text=text, blocks=blocks)
-                return
+                response = self._client.chat_postMessage(
+                    channel=self._channel_id, text=text, blocks=blocks, thread_ts=thread_ts
+                )
+                return (response or {}).get("ts")
             except Exception as exc:
                 log.error("슬랙 봇 전송 실패: %s%s", exc, " — 웹훅으로 재시도" if self._webhook else "")
         if self._webhook is not None:
@@ -178,23 +188,34 @@ class SlackNotifier:
                     log.error("슬랙 웹훅 전송 실패: HTTP %s", status)
             except Exception as exc:
                 log.error("슬랙 웹훅 전송 실패: %s", exc)
+        return None
 
-    def upload_file(self, path: Path, title: str, comment: str = "") -> bool:
+    def update(self, ts: str, text: str, blocks: list[dict] | None = None) -> bool:
+        """이미 보낸 메시지를 고친다 (진행 상황 체크리스트 갱신용)."""
+        if self._client is None or not ts:
+            return False
+        try:
+            self._client.chat_update(
+                channel=self._channel_id, ts=ts, text=self._clean(text), blocks=self._clean_blocks(blocks)
+            )
+            return True
+        except Exception as exc:
+            log.error("슬랙 메시지 수정 실패: %s", exc)
+            return False
+
+    def upload_file(self, path: Path, title: str, comment: str = "", thread_ts: str | None = None) -> bool:
         if self._client is None:
             log.info("[슬랙] 봇 토큰이 없어 파일 업로드를 건너뜁니다: %s", path.name)
             return False
         try:
             self._client.files_upload_v2(
-                channel=self._channel_id, file=str(path), title=title, initial_comment=self._clean(comment)
+                channel=self._channel_id, file=str(path), title=title,
+                initial_comment=self._clean(comment), thread_ts=thread_ts,
             )
             return True
         except Exception as exc:
             log.error("슬랙 파일 업로드 실패: %s", exc)
             return False
-
-    def notify_start(self, category: str, trigger: str, requested_by: str) -> None:
-        who = f" (요청: {escape_mrkdwn(requested_by)})" if requested_by else ""
-        self.post(f"🧹 [청소 자동화] 포스팅 가동 중... 카테고리: {category} / 트리거: {trigger}{who}")
 
     def notify_error(self, stage: str, error: Exception | str) -> None:
         detail = escape_mrkdwn(_truncate(str(error), 1500))

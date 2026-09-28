@@ -1,7 +1,23 @@
 from PIL import Image
 
-from autopost.before_after import GAP, MAX_WIDTH, make_comparison
+from autopost.before_after import GAP, MAX_WIDTH, make_comparison, make_contact_sheet
 from fakes import make_jpeg
+
+
+def test_contact_sheet_has_one_row_per_stage(tmp_path):
+    photos = {
+        "작업전": [make_jpeg(tmp_path / f"b{i}.jpg", size=(800, 600)) for i in range(3)],
+        "작업중": [],
+        "작업후": [make_jpeg(tmp_path / "a.jpg", size=(600, 800))],
+    }
+    out = make_contact_sheet(photos, tmp_path / "out" / "sheet.jpg", thumb=100)
+    with Image.open(out) as image:
+        assert image.size == (150 + 3 * (100 + 8) + 8, 2 * (100 + 8) + 8)  # 빈 단계는 줄에서 제외
+
+
+def test_contact_sheet_without_photos_returns_none(tmp_path):
+    assert make_contact_sheet({"작업전": []}, tmp_path / "sheet.jpg") is None
+    assert not (tmp_path / "sheet.jpg").exists()
 
 
 def test_side_by_side_same_height(tmp_path):

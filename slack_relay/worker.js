@@ -1,30 +1,47 @@
 /**
- * 슬랙 슬래시 커맨드 → GitHub Actions(repository_dispatch) 중계 Cloudflare Worker.
+ * 슬랙 슬래시 커맨드 → GitHub Actions(workflow_dispatch) 중계 Cloudflare Worker.
  *
  * GitHub Actions 는 외부 요청(웹훅)을 직접 받을 수 없어서, 슬랙 명령을 이 Worker 가 받아
  * 서명 검증 후 GitHub API 로 워크플로를 실행시킨다. (Cloudflare 무료 플랜으로 충분)
  *
  * 필요한 설정 (wrangler secret put / wrangler.toml [vars])
  *   SLACK_SIGNING_SECRET : 슬랙 앱 > Basic Information > Signing Secret
- *   GITHUB_TOKEN         : fine-grained PAT (대상 리포지토리 Contents: Read and write)
+ *   GITHUB_TOKEN         : fine-grained PAT (대상 리포지토리 Actions: Read and write 만)
  *   GITHUB_REPO          : "깃허브아이디/리포지토리명"
+ *   GITHUB_WORKFLOW      : (선택) 워크플로 파일명, 기본 auto_post.yml
+ *   GITHUB_REF           : (선택) 실행 브랜치, 기본 main
  *   ALLOWED_USER_IDS     : (선택) 실행 허용 슬랙 사용자 ID 목록 "U0123,U0456"
  *
- * 사용 예:  /posting            → 자동 카테고리로 포스팅
- *           /posting 로프청소   → 카테고리 지정
- *           /posting 테스트     → 발행 없이 원고·영상 미리보기(dry-run)
- *           /posting-setup      → 초기 세팅 점검
+ * 사용 예:  /posting                  → 자동 카테고리로 포스팅
+ *           /posting 로프청소         → 카테고리 지정
+ *           /posting 정기청소 고잔동  → 실제 현장 위치 지정
+ *           /posting 테스트           → 발행 없이 원고·영상 미리보기(dry-run)
+ *           /posting 도움말           → 사용법 안내 (실행 안 함)
+ *           /posting-setup            → 초기 세팅 점검
  */
 
 export const COMMANDS = {
-  "/posting": "slack-post",
-  "/포스팅": "slack-post",
-  "/posting-setup": "slack-setup",
-  "/초기세팅": "slack-setup",
+  "/posting": "post",
+  "/포스팅": "post",
+  "/posting-setup": "setup",
+  "/초기세팅": "setup",
 };
 
 const MAX_AGE_SECONDS = 60 * 5;
 const DRY_RUN_WORDS = /(테스트|dry-?run|test)/gi;
+const HELP_WORDS = /^(도움말|help|사용법|\?)$/i;
+
+export const HELP_TEXT = [
+  "*🧹 청소 자동 포스팅 명령어*",
+  "• `/posting` — 사진이 가장 많은 카테고리로 바로 포스팅",
+  "• `/posting 로프청소` — 카테고리 지정 (정기청소 / 로프청소 / 방역소독)",
+  "• `/posting 정기청소 고잔동` — 실제 현장 위치를 글에 반영",
+  "• `/posting 테스트` — 발행 없이 원고·영상만 미리보기",
+  "• `/posting-setup` — 드라이브 폴더·템플릿 초기 세팅 점검",
+  "",
+  "실행하면 채널에 진행 메시지가 올라오고 단계별(사진 선택 → 정리 → 원고 → 영상 → 발행 → 보관)로 갱신됩니다.",
+  "선택된 사진·원고·영상은 그 메시지의 스레드에서 확인할 수 있어요.",
+].join("\n");
 
 export default {
   async fetch(request, env) {
@@ -38,9 +55,13 @@ export default {
 
     const form = new URLSearchParams(raw);
     const command = form.get("command") || "";
-    const eventType = COMMANDS[command];
-    if (!eventType) {
-      return reply(`알 수 없는 명령어입니다: ${command}`);
+    const mode = COMMANDS[command];
+    if (!mode) {
+      return reply(`알 수 없는 명령어입니다: ${command}\n\n${HELP_TEXT}`);
+    }
+    const text = (form.get("text") || "").trim();
+    if (HELP_WORDS.test(text)) {
+      return reply(HELP_TEXT);
     }
 
     const userId = form.get("user_id") || "";
@@ -49,30 +70,48 @@ export default {
       return reply("이 명령어를 실행할 권한이 없습니다. 관리자에게 문의하세요.");
     }
 
-    const { category, dryRun } = parseText(form.get("text") || "");
-    const payload = { category, dry_run: dryRun, requested_by: form.get("user_name") || userId };
+    const { category, dryRun } = parseText(text);
+    const inputs = buildInputs(mode, category, dryRun, cleanName(form.get("user_name") || userId));
     try {
-      await dispatch(env, eventType, payload);
+      await dispatch(env, inputs);
     } catch (err) {
       return reply(`GitHub Actions 실행 요청에 실패했습니다: ${err.message}`);
     }
 
-    const label = eventType === "slack-setup"
+    const label = mode === "setup"
       ? "초기 세팅"
       : `포스팅${category ? ` (${category})` : ""}${dryRun ? " [테스트]" : ""}`;
-    return reply(`🧹 ${label} 요청을 접수했습니다. 몇 분 안에 이 채널로 결과를 알려드릴게요.`, "in_channel");
+    return reply(
+      `🧹 ${label} 요청을 접수했습니다. 1분 안에 진행 메시지가 올라오고, 단계마다 갱신됩니다.`,
+      "in_channel",
+    );
   },
 };
 
 export function parseText(text) {
   const dryRun = new RegExp(DRY_RUN_WORDS.source, "i").test(text);
-  const category = text
-    .replace(DRY_RUN_WORDS, "")
-    .replace(/[`<>&*_~|!]/g, "") // 슬랙 mrkdwn 제어문자 제거 (멘션·코드블록 탈출 방지)
+  const category = cleanName(text.replace(DRY_RUN_WORDS, ""));
+  return { category, dryRun };
+}
+
+function cleanName(value) {
+  return value
+    .replace(/[`<>&*_~|!"'\\]/g, "") // 슬랙 mrkdwn·따옴표 제어문자 제거 (멘션·코드블록 탈출 방지)
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 30);
-  return { category, dryRun };
+}
+
+export function buildInputs(mode, category, dryRun, requestedBy) {
+  // workflow_dispatch 의 inputs 값은 모두 문자열로 전달한다 (boolean 입력도 "true"/"false")
+  return {
+    mode,
+    category: mode === "setup" ? "" : category,
+    location: "",
+    dry_run: dryRun && mode !== "setup" ? "true" : "false",
+    source: "slack",
+    requested_by: requestedBy,
+  };
 }
 
 export async function verifySlackSignature(headers, body, secret, nowSeconds = Date.now() / 1000) {
@@ -108,11 +147,16 @@ function timingSafeEqual(a, b) {
   return diff === 0;
 }
 
-async function dispatch(env, eventType, payload) {
+export function dispatchUrl(env) {
+  const workflow = env.GITHUB_WORKFLOW || "auto_post.yml";
+  return `https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${workflow}/dispatches`;
+}
+
+async function dispatch(env, inputs) {
   if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) {
     throw new Error("Worker 에 GITHUB_TOKEN / GITHUB_REPO 가 설정되지 않았습니다");
   }
-  const response = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/dispatches`, {
+  const response = await fetch(dispatchUrl(env), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${env.GITHUB_TOKEN}`,
@@ -121,10 +165,21 @@ async function dispatch(env, eventType, payload) {
       "User-Agent": "cleaning-autopost-slack-relay",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ event_type: eventType, client_payload: payload }),
+    body: JSON.stringify({ ref: env.GITHUB_REF || "main", inputs }),
   });
-  if (response.status !== 204) {
-    throw new Error(`GitHub API HTTP ${response.status}`);
+  if (response.status !== 204 && response.status !== 200) {
+    throw new Error(`GitHub API HTTP ${response.status}${await errorDetail(response)}`);
+  }
+}
+
+// GitHub 오류 본문의 message 만 짧게 전달 (예: "Unexpected inputs provided", "Bad credentials")
+async function errorDetail(response) {
+  try {
+    const body = await response.json();
+    const message = String(body.message || "").replace(/[`<>&*_~|!"'\\]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+    return message ? ` — ${message}` : "";
+  } catch {
+    return "";
   }
 }
 

@@ -230,13 +230,22 @@ class _FakePermissions:
 @dataclass
 class FakeWebClient:
     messages: list[dict] = field(default_factory=list)
+    updates: list[dict] = field(default_factory=list)
     uploads: list[dict] = field(default_factory=list)
     fail: bool = False
+    fail_update: bool = False
 
     def chat_postMessage(self, **kwargs):
         if self.fail:
             raise RuntimeError("slack down")
         self.messages.append(kwargs)
+        return {"ok": True, "ts": f"1700000000.{len(self.messages):06d}"}
+
+    def chat_update(self, **kwargs):
+        if self.fail or self.fail_update:
+            raise RuntimeError("slack down")
+        self.updates.append(kwargs)
+        return {"ok": True, "ts": kwargs.get("ts")}
 
     def files_upload_v2(self, **kwargs):
         if self.fail:
@@ -244,7 +253,32 @@ class FakeWebClient:
         self.uploads.append(kwargs)
 
     def texts(self) -> list[str]:
-        return [m["text"] for m in self.messages]
+        """게시 + 갱신된 모든 메시지 텍스트 (시간 순서 무관)."""
+        return [m["text"] for m in self.messages] + [u["text"] for u in self.updates]
+
+    def last_text(self, ts: str) -> str:
+        """특정 메시지의 최종 텍스트 (chat_update 반영)."""
+        latest = next(m["text"] for m in self.messages if self._ts(m) == ts)
+        for update in self.updates:
+            if update.get("ts") == ts:
+                latest = update["text"]
+        return latest
+
+    def last_blocks(self, ts: str) -> list:
+        latest = next(m.get("blocks") for m in self.messages if self._ts(m) == ts)
+        for update in self.updates:
+            if update.get("ts") == ts:
+                latest = update.get("blocks")
+        return latest or []
+
+    def _ts(self, message: dict) -> str:
+        return f"1700000000.{self.messages.index(message) + 1:06d}"
+
+    def thread(self, ts: str) -> list[dict]:
+        return [m for m in self.messages if m.get("thread_ts") == ts]
+
+    def thread_uploads(self, ts: str) -> list[dict]:
+        return [u for u in self.uploads if u.get("thread_ts") == ts]
 
 
 # ------------------------------------------------------------------ Gemini

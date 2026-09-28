@@ -13,7 +13,9 @@ from . import blog_publisher, naver_publisher, tiktok_publisher
 from .ai_helper import ContentGenerator, PostContent
 from .blog_publisher import BloggerPublisher, build_blog_html, build_labels
 from .config import Config, platform_readiness
-from .before_after import make_comparison
+from .before_after import make_comparison, make_contact_sheet
+from .progress import ProgressReporter
+from .step_summary import build_failure_summary, build_step_summary, write_step_summary
 from .constants import (
     BGM_FILE,
     FOOTER_FILE,
@@ -48,6 +50,7 @@ class RunOptions:
     trigger: str = "manual"
     requested_by: str = ""
     location: str = ""  # 실제 현장 위치 (예: '고잔동', '안산 중앙동') — 없으면 서비스 지역 순환
+    run_url: str = ""  # GitHub Actions 실행 로그 주소 (슬랙 진행 메시지에 링크)
 
 
 @dataclass(frozen=True)
@@ -318,18 +321,49 @@ def _archive(
     return ArchiveOutcome(folder_url(archive.id), moved, tuple(failed))
 
 
-def _send_fallbacks(
-    slack: SlackNotifier,
-    results: Sequence[PublishResult],
-    content: PostContent,
-    video_path: Path | None,
-    dry_run: bool,
-) -> None:
+class AlreadyReported(RuntimeError):
+    """진행 상황 스레드에 이미 오류를 보고함 — 상위에서 중복 알림을 보내지 않는다."""
+
+
+TRIGGER_LABELS = {
+    "schedule": "정기 자동 실행",
+    "workflow_dispatch": "수동 실행",
+    "repository_dispatch": "슬랙 명령",
+    "slack": "슬랙 명령",
+    "manual": "로컬 실행",
+}
+
+
+def _stage_counts(selection: PhotoSelection) -> str:
+    return " · ".join(
+        f"{STAGE_LABELS[s]} {len(selection.files_by_stage.get(s, ()))}"
+        for s in STAGES if selection.files_by_stage.get(s)
+    )
+
+
+def _results_line(results: Sequence[PublishResult]) -> str:
+    icon = {True: "✅", False: "❌"}
+    return " · ".join(f"{r.platform} {'⏭️' if r.skipped else icon[r.ok]}" for r in results)
+
+
+def _meta_lines(category: str, area, options: RunOptions, now: datetime) -> list[str]:
+    # 지역·트리거는 Actions 수동 입력(자유 텍스트)에서 올 수 있어 멘션·링크가 되지 않도록 이스케이프
+    meta = [f"카테고리 *{category}*"]
+    if area is not None:
+        meta.append(f"지역 {escape_mrkdwn(area.label)} ({'실제 현장' if area.is_site else '서비스 지역'})")
+    meta.append(escape_mrkdwn(TRIGGER_LABELS.get(options.trigger, options.trigger)))
+    if options.requested_by:
+        meta.append(f"요청 {escape_mrkdwn(options.requested_by)}")
+    meta.append(f"{now:%m/%d %H:%M}")
+    return meta
+
+
+def _thread_fallbacks(reporter: ProgressReporter, results: Sequence[PublishResult], content: PostContent) -> None:
     failed = {r.platform for r in results if not r.ok and not r.skipped}
-    if dry_run or naver_publisher.PLATFORM in failed:
-        slack.post(f"📝 네이버 블로그 수동 발행용 초안\n\n{content.plain_text()}")
-    if video_path is not None and (dry_run or tiktok_publisher.PLATFORM in failed):
-        slack.upload_file(video_path, "틱톡 영상", f"🎬 틱톡 수동 업로드용 영상\n\n{content.tiktok_caption}")
+    if naver_publisher.PLATFORM in failed:
+        reporter.note(f"📝 네이버 블로그 수동 발행용 초안 (위 원고 파일과 같음)\n\n{content.plain_text()}")
+    if tiktok_publisher.PLATFORM in failed:
+        reporter.note(f"🎬 틱톡은 이 스레드의 영상을 수동 업로드하세요\n캡션: {content.tiktok_caption}")
 
 
 def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
@@ -350,14 +384,43 @@ def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
     if selection is None:
         target = escape_mrkdwn(options.category) or "전체 카테고리"
         slack.post(f"📭 [청소 자동화] {target}에 포스팅할 사진이 부족합니다 (최소 {cfg.min_photos}장). 드라이브에 사진을 올려주세요.")
+        write_step_summary(f"## 📭 포스팅할 사진 없음\n{target} — 최소 {cfg.min_photos}장 필요")
         return 0
 
-    slack.notify_start(selection.category, options.trigger, options.requested_by)
     now = services.now()
+    # 실제 현장 위치가 주어지면 그 위치, 아니면 서비스 지역(시·구·동)을 날짜 순서로 순환
+    area = site_area(options.location) or pick_area(cfg.service_areas, now.toordinal())
+    tag = " [테스트]" if options.dry_run else ""
+    reporter = ProgressReporter(
+        slack, f"🧹 {selection.category} 포스팅 진행 중{tag}",
+        _meta_lines(selection.category, area, options, now), options.run_url,
+    )
+    reporter.start()
+    reporter.step("select", "done", f"{selection.total}장 ({_stage_counts(selection)})")
+    try:
+        return _run_steps(cfg, options, services, layout, selection, reporter, area, now)
+    except Exception as exc:
+        failed_step = reporter.fail_current(exc)
+        write_step_summary(build_failure_summary(selection.category, failed_step, exc))
+        raise AlreadyReported(str(exc)) from exc
+
+
+def _run_steps(
+    cfg: Config,
+    options: RunOptions,
+    services: Services,
+    layout: DriveLayout,
+    selection: PhotoSelection,
+    reporter: ProgressReporter,
+    area,
+    now: datetime,
+) -> int:
     stamp = now.strftime("%Y%m%d_%H%M")
     workdir = cfg.output_dir / f"{stamp}_{selection.category}"
+    category = selection.category
 
-    originals = _download_selection(services.drive, selection, workdir)  # 3. 이미지 세탁
+    reporter.step("prepare", "run")  # 사진 다운로드·정리·전후 비교
+    originals = _download_selection(services.drive, selection, workdir)
     washed = MappingProxyType({
         stage: tuple(services.washer(list(paths), workdir / "washed" / stage)) for stage, paths in originals.items()
     })
@@ -366,34 +429,56 @@ def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
     media = PostMedia(
         washed, _make_comparison(washed, workdir), _download_reviews(services, review_files, workdir)
     )
+    reporter.file(make_contact_sheet(washed, workdir / "selected.jpg"), "선택된 사진", "📸 이번 글에 쓰는 사진")
+    reporter.file(media.comparison, "전후 비교", "🖼️ 전후 비교 이미지")
+    reporter.step("prepare", "done",
+                  f"전후 비교 {'O' if media.comparison else 'X'} · 고객후기 {len(media.reviews)}장")
 
-    # 실제 현장 위치가 주어지면 그 위치, 아니면 서비스 지역(시·구·동)을 날짜 순서로 순환
-    area = site_area(options.location) or pick_area(cfg.service_areas, now.toordinal())
-    if area is not None:
-        slack.post(f"📍 지역 키워드: {area.label}" + (" (실제 현장)" if area.is_site else " (서비스 지역)"))
-    content = services.generator.generate(selection.category, washed, area=area)  # 4. AI 원고
+    reporter.step("draft", "run")  # AI 원고
+    content = services.generator.generate(category, washed, area=area)
     post_txt = workdir / "post.txt"
     post_txt.write_text(content.plain_text() + f"\n\n[틱톡 캡션]\n{content.tiktok_caption}\n", encoding="utf-8")
+    reporter.step("draft", "done", f"본문 {content.text_length():,}자")
+    reporter.file(post_txt, "원고", f"📝 *{content.title}*\n해시태그: {' '.join(content.hashtags[:6])} …")
 
-    video_path, video_error = _make_video(services, cfg, media, assets, workdir)  # 5. 틱톡 영상
-
-    if options.dry_run:  # 6. 발행
-        results = _dry_run_results(video_error)
+    reporter.step("video", "run")  # 틱톡 영상
+    video_path, video_error = _make_video(services, cfg, media, assets, workdir)
+    if video_path is not None:
+        reporter.step("video", "done", f"{cfg.video_seconds:g}초 · 9:16")
+        reporter.file(video_path, "틱톡 영상", f"🎬 틱톡 영상\n캡션: {content.tiktok_caption}")
     else:
-        results = _publish_all(
-            services, layout, content, media, assets, (video_path, video_error), selection.category, stamp
-        )
+        reporter.step("video", "fail", video_error)
 
-    outcome = ArchiveOutcome()  # 7. 사진 이동 (1곳이라도 성공했을 때만 — 전부 실패면 다음에 재시도)
-    if not options.dry_run and any(r.ok for r in results):
+    if options.dry_run:  # 발행
+        results = _dry_run_results(video_error)
+        reporter.step("publish", "skip", "테스트 실행 — 발행 안 함")
+    else:
+        reporter.step("publish", "run")
+        results = _publish_all(
+            services, layout, content, media, assets, (video_path, video_error), category, stamp
+        )
+        reporter.step("publish", "done" if any(r.ok for r in results) else "fail", _results_line(results))
+
+    outcome = ArchiveOutcome()  # 사진 보관 (1곳이라도 성공했을 때만 — 전부 실패면 다음에 재시도)
+    if options.dry_run:
+        reporter.step("archive", "skip", "테스트 실행 — 사진 그대로 둠")
+    elif any(r.ok for r in results):
+        reporter.step("archive", "run")
         outcome = _archive(
             services, layout, [*selection.all_files(), *review_files], [video_path, post_txt],
-            f"{now:%Y-%m-%d_%H%M}_{selection.category}",
+            f"{now:%Y-%m-%d_%H%M}_{category}",
         )
+        reporter.step("archive", "fail" if outcome.failed else "done",
+                      f"{outcome.moved}장 이동" + (f", {len(outcome.failed)}장 실패" if outcome.failed else ""))
+    else:
+        reporter.step("archive", "skip", "발행 실패 — 다음 실행에 다시 사용")
 
-    _send_fallbacks(slack, results, content, video_path, options.dry_run)
-    blocks = build_report_blocks(
-        selection.category, content.title, results, outcome.url, outcome.moved, options.dry_run, outcome.failed
-    )
-    slack.post(f"🧹 [청소 자동화] {selection.category} 포스팅 결과", blocks)
-    return 0 if options.dry_run or any(r.ok for r in results) else 1
+    _thread_fallbacks(reporter, results, content)
+    blocks = build_report_blocks(category, content.title, results, outcome.url, outcome.moved,
+                                 options.dry_run, outcome.failed)
+    reporter.note(f"🧹 [청소 자동화] {category} 포스팅 결과", blocks)
+    ok = options.dry_run or any(r.ok for r in results)
+    reporter.finish(f"🧪 {category} 테스트 완료" if options.dry_run
+                    else f"✅ {category} 포스팅 완료" if ok else f"❌ {category} 포스팅 실패")
+    write_step_summary(build_step_summary(category, area, content, results, outcome, options.dry_run))
+    return 0 if ok else 1

@@ -7,7 +7,7 @@ from autopost import setup_engine, templates
 from autopost.ai_helper import parse_content
 from autopost.config import load_config
 from autopost.constants import USED_FOLDER
-from autopost.pipeline import KST, RunOptions, Services, run_post, run_setup, safe_name
+from autopost.pipeline import KST, AlreadyReported, RunOptions, Services, run_post, run_setup, safe_name
 from autopost.results import PublishResult
 from autopost.slack_helper import SlackNotifier
 from fakes import FakeWebClient, MemoryDrive, ai_json, jpeg_bytes
@@ -101,6 +101,27 @@ def _services(drive, client, **kwargs):
     )
 
 
+def _progress_ts(client):
+    """진행 상황 메시지(체크리스트)의 ts — 채널에 올라간 첫 '🧹 … 진행 중' 메시지."""
+    for index, message in enumerate(client.messages, start=1):
+        if message.get("thread_ts") is None and "진행 중" in message["text"]:
+            return f"1700000000.{index:06d}"
+    raise AssertionError("진행 메시지가 없습니다")
+
+
+def _checklist(client, ts):
+    return client.last_blocks(ts)[2]["text"]["text"]
+
+
+def _report(client, ts):
+    report = next(m for m in reversed(client.thread(ts)) if m.get("blocks"))
+    return "\n".join(b.get("text", {}).get("text", "") for b in report["blocks"])
+
+
+def _upload_titles(client, ts):
+    return [u["title"] for u in client.thread_uploads(ts)]
+
+
 def _archive_children(drive, layout):
     archive = drive.find_child(layout.used_folder_id, "2026-09-28_1000_로프청소", folder_only=True)
     return archive, ([c.name for c in drive.children(archive.id)] if archive else [])
@@ -140,12 +161,18 @@ def test_full_success_publishes_everywhere_and_archives(world):
     for ids in photos.values():
         assert all(drive.items[i]["parent"] == archive.id for i in ids)
 
-    texts = client.texts()
-    assert any("포스팅 가동 중" in t for t in texts)
-    assert not any("수동 발행용" in t for t in texts)
-    assert client.uploads == []
-    report = client.messages[-1]["blocks"]
-    assert any("✅ *틱톡*" in b.get("text", {}).get("text", "") for b in report)
+    ts = _progress_ts(client)
+    assert client.messages[0]["text"] == "🧹 로프청소 포스팅 진행 중"
+    assert client.last_text(ts) == "✅ 로프청소 포스팅 완료"
+    checklist = _checklist(client, ts)
+    assert all(line.startswith("✅") for line in checklist.splitlines()) and len(checklist.splitlines()) == 6
+    assert "5장 (작업 전 2 · 작업 중 1 · 작업 후 2)" in checklist
+    # 결과물은 모두 진행 메시지의 스레드로
+    assert _upload_titles(client, ts) == ["선택된 사진", "전후 비교", "원고", "틱톡 영상"]
+    assert len(client.uploads) == 4
+    assert not any("수동 발행용" in t for t in client.texts())
+    assert "✅ *틱톡*" in _report(client, ts)
+    assert [m for m in client.messages if m.get("thread_ts") is None] == [client.messages[0]]  # 채널엔 1개만
 
 
 def test_partial_failure_sends_manual_fallbacks(world):
@@ -156,8 +183,12 @@ def test_partial_failure_sends_manual_fallbacks(world):
         tiktok=FakePublisher("틱톡", RuntimeError("spam risk"))))
 
     assert code == 0
-    assert any("네이버 블로그 수동 발행용 초안" in t for t in client.texts())
-    assert client.uploads and client.uploads[0]["title"] == "틱톡 영상"
+    ts = _progress_ts(client)
+    thread_texts = [m["text"] for m in client.thread(ts)]
+    assert any("네이버 블로그 수동 발행용 초안" in t for t in thread_texts)
+    assert any("틱톡은 이 스레드의 영상을 수동 업로드" in t for t in thread_texts)
+    assert "틱톡 영상" in _upload_titles(client, ts)
+    assert "블로그·틱톡 발행 — 구글 블로그 ✅ · 네이버 블로그 ❌ · 틱톡 ❌" in _checklist(client, ts)
     _, names = _archive_children(drive, layout)
     assert names  # 1곳이라도 성공 → 사진 이동
 
@@ -171,9 +202,14 @@ def test_all_failed_keeps_photos_for_retry(world):
     assert archive is None
     first = photos["작업전"][0]
     assert drive.items[first]["parent"] == layout.stage_folders["로프청소"]["작업전"]
-    report = "\n".join(b.get("text", {}).get("text", "") for b in client.messages[-1]["blocks"])
+    ts = _progress_ts(client)
+    report = _report(client, ts)
     assert "❌ *구글 블로그*\n401" in report
     assert "⏭️ *네이버 블로그*" in report
+    assert client.last_text(ts) == "❌ 로프청소 포스팅 실패"
+    checklist = _checklist(client, ts)
+    assert "❌ 블로그·틱톡 발행" in checklist
+    assert "⏭️ 사용 사진 보관 — 발행 실패" in checklist
 
 
 def test_review_is_published_and_archived_and_area_rotates(world):
@@ -189,7 +225,8 @@ def test_review_is_published_and_archived_and_area_rotates(world):
 
     area = generator.areas[0]
     assert area.city == "안산" and not area.is_site  # 서비스 지역 키워드 (현장 위치 아님)
-    assert any("📍 지역 키워드: 안산" in t and "(서비스 지역)" in t for t in client.texts())
+    meta = client.messages[0]["blocks"][1]["elements"][0]["text"]
+    assert "지역 안산" in meta and "(서비스 지역)" in meta
     html_body = blogger.calls[0][1]
     assert "고객님이 남겨주신 후기" in html_body
     assert html_body.count("lh3.googleusercontent.com") == 5 + 1 + 1 + 2  # 사진+비교+후기+헤더/푸터
@@ -243,9 +280,10 @@ def test_video_failure_only_fails_tiktok(world):
     assert code == 0
     assert blogger.calls and naver.calls
     assert tiktok.calls == []
-    report = "\n".join(b.get("text", {}).get("text", "") for b in client.messages[-1]["blocks"])
-    assert "❌ *틱톡*\n영상 생성 실패: ffmpeg crashed" in report
-    assert client.uploads == []  # 업로드할 영상이 없음
+    ts = _progress_ts(client)
+    assert "❌ *틱톡*\n영상 생성 실패: ffmpeg crashed" in _report(client, ts)
+    assert "틱톡 영상" not in _upload_titles(client, ts)  # 업로드할 영상이 없음
+    assert "❌ 틱톡 영상 제작 — 영상 생성 실패: ffmpeg crashed" in _checklist(client, ts)
     archive, names = _archive_children(drive, layout)
     assert archive is not None and "tiktok.mp4" not in names
 
@@ -267,9 +305,11 @@ def test_partial_move_failure_still_reports_results(world):
     archive, _ = _archive_children(drive, layout)
     moved = [i for ids in photos.values() for i in ids if drive.items[i]["parent"] == archive.id]
     assert len(moved) == 4
-    report = "\n".join(b.get("text", {}).get("text", "") for b in client.messages[-1]["blocks"])
+    ts = _progress_ts(client)
+    report = _report(client, ts)
     assert "사진 1장 이동 실패" in report
     assert "✅ *구글 블로그*" in report
+    assert "❌ 사용 사진 보관 — 4장 이동, 1장 실패" in _checklist(client, ts)
 
 
 def test_archive_folder_failure_still_reports_results(world):
@@ -284,8 +324,7 @@ def test_archive_folder_failure_still_reports_results(world):
 
     drive.ensure_folder = failing_ensure
     assert run_post(cfg, RunOptions(), services) == 0
-    report = "\n".join(b.get("text", {}).get("text", "") for b in client.messages[-1]["blocks"])
-    assert "사진 5장 이동 실패" in report
+    assert "사진 5장 이동 실패" in _report(client, _progress_ts(client))
 
 
 def test_dry_run_publishes_nothing_but_sends_preview(world):
@@ -296,9 +335,14 @@ def test_dry_run_publishes_nothing_but_sends_preview(world):
     assert code == 0
     assert blogger.calls == []
     assert _archive_children(drive, layout)[0] is None
-    assert any("수동 발행용 초안" in t for t in client.texts())
-    assert client.uploads
-    assert "테스트" in client.messages[-1]["blocks"][0]["text"]["text"]
+    ts = _progress_ts(client)
+    assert client.messages[0]["text"] == "🧹 로프청소 포스팅 진행 중 [테스트]"
+    assert client.last_text(ts) == "🧪 로프청소 테스트 완료"
+    assert _upload_titles(client, ts) == ["선택된 사진", "전후 비교", "원고", "틱톡 영상"]
+    checklist = _checklist(client, ts)
+    assert "⏭️ 블로그·틱톡 발행 — 테스트 실행" in checklist
+    assert "⏭️ 사용 사진 보관 — 테스트 실행" in checklist
+    assert "테스트 실행 결과" in _report(client, ts)
 
 
 def test_not_enough_photos(world, tmp_path):
@@ -344,3 +388,96 @@ def test_run_post_requires_generator(world):
 ])
 def test_safe_name(name, expected):
     assert safe_name(name) == expected
+
+
+def test_error_mid_run_is_reported_in_progress_thread(world):
+    drive, layout, photos, cfg, client = world
+
+    class BrokenGenerator(FakeGenerator):
+        def generate(self, category, images_by_stage, area=None):
+            raise RuntimeError("Gemini 503 overloaded")
+
+    with pytest.raises(AlreadyReported, match="Gemini 503"):
+        run_post(cfg, RunOptions(), _services(drive, client, generator=BrokenGenerator(), blogger=FakeBlogger()))
+
+    ts = _progress_ts(client)
+    assert client.last_text(ts) == "❌ 로프청소 포스팅 실패"
+    checklist = _checklist(client, ts)
+    assert "✅ 사진 정리·전후 비교" in checklist
+    assert "❌ AI 원고 작성 — Gemini 503 overloaded" in checklist
+    assert "⬜ 틱톡 영상 제작" in checklist
+    assert any("'AI 원고 작성' 단계 오류" in m["text"] for m in client.thread(ts))
+    assert _archive_children(drive, layout)[0] is None  # 사진은 그대로
+
+
+def test_mid_run_failure_writes_step_summary(world, tmp_path, monkeypatch):
+    drive, layout, photos, cfg, client = world
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+
+    def broken_washer(paths, out_dir):
+        raise RuntimeError("disk full")
+
+    services = replace(_services(drive, client, blogger=FakeBlogger()), washer=broken_washer)
+    with pytest.raises(AlreadyReported):
+        run_post(cfg, RunOptions(), services)
+    text = summary.read_text(encoding="utf-8")
+    assert "## ❌ 포스팅 실패 — 로프청소" in text
+    assert "- **실패 단계**: 사진 정리·전후 비교" in text and "disk full" in text
+
+
+def test_free_text_location_and_trigger_are_escaped_in_meta(world):
+    drive, layout, photos, cfg, client = world
+    options = RunOptions(location="<!channel> 어딘가동", trigger="<https://evil|클릭>")
+    run_post(cfg, options, _services(drive, client, blogger=FakeBlogger()))
+    meta = client.messages[0]["blocks"][1]["elements"][0]["text"]
+    assert "<!channel>" not in meta and "<https://evil" not in meta
+    assert "&lt;https://evil|클릭&gt;" in meta
+
+
+def test_progress_links_actions_run_and_requester(world):
+    drive, layout, photos, cfg, client = world
+    options = RunOptions(trigger="slack", requested_by="hong", run_url="https://github.com/o/r/actions/runs/9")
+    run_post(cfg, options, _services(drive, client, blogger=FakeBlogger()))
+    blocks = client.last_blocks(_progress_ts(client))
+    meta = blocks[1]["elements"][0]["text"]
+    assert "슬랙 명령" in meta and "요청 hong" in meta
+    assert "<https://github.com/o/r/actions/runs/9|실행 로그 보기>" in blocks[-1]["elements"][0]["text"]
+
+
+def test_webhook_only_posts_step_lines_without_threads(world):
+    drive, layout, photos, cfg, _ = world
+
+    class Hook:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, **kwargs):
+            self.sent.append(kwargs)
+
+    hook = Hook()
+    services = replace(_services(drive, FakeWebClient(), blogger=FakeBlogger()), slack=SlackNotifier(webhook=hook))
+    assert run_post(cfg, RunOptions(), services) == 0
+    texts = [m["text"] for m in hook.sent]
+    assert texts[0] == "🧹 로프청소 포스팅 진행 중"
+    assert "✅ AI 원고 작성 — 본문" in "\n".join(texts)
+    assert any("포스팅 결과" in t for t in texts)
+
+
+def test_step_summary_is_written_for_github_actions(world, tmp_path, monkeypatch):
+    drive, layout, photos, cfg, client = world
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    run_post(cfg, RunOptions(), _services(drive, client, blogger=FakeBlogger()))
+    text = summary.read_text(encoding="utf-8")
+    assert "## 🧹 포스팅 결과 — 로프청소" in text
+    assert "| 구글 블로그 | ✅ 성공 | [열기](https://blog/post) |" in text
+    assert "사용한 사진 5장" in text
+
+
+def test_not_enough_photos_writes_step_summary(world, tmp_path, monkeypatch):
+    drive, layout, photos, cfg, client = world
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    run_post(cfg, RunOptions(category="방역소독"), _services(drive, client, blogger=FakeBlogger()))
+    assert "포스팅할 사진 없음" in summary.read_text(encoding="utf-8")

@@ -3,8 +3,11 @@ main = "worker.js"
 compatibility_date = "2025-01-01"
 
 [vars]
-# 깃허브아이디/리포지토리명 으로 바꾸세요
-GITHUB_REPO = "your-github-id/your-repo"
+# 깃허브아이디/리포지토리명
+GITHUB_REPO = "rkdghkclgns-design/bonyeon-autopost"
+# 실행할 워크플로 파일과 브랜치
+GITHUB_WORKFLOW = "auto_post.yml"
+GITHUB_REF = "main"
 # (선택) 실행 허용할 슬랙 사용자 ID, 쉼표로 구분. 비우면 채널의 누구나 실행 가능
 ALLOWED_USER_IDS = ""
 

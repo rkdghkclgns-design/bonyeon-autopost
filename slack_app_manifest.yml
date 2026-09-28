@@ -13,7 +13,7 @@ features:
     - command: /posting
       url: https://YOUR-WORKER.workers.dev/
       description: 블로그·틱톡 자동 포스팅 실행
-      usage_hint: "[정기청소|로프청소|방역소독] [테스트]"
+      usage_hint: "[정기청소|로프청소|방역소독] [현장 동] [테스트]  ·  도움말"
       should_escape: false
     - command: /posting-setup
       url: https://YOUR-WORKER.workers.dev/

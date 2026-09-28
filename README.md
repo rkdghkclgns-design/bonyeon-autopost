@@ -15,6 +15,26 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
                ⑧ 슬랙 결과 카드 (+ 실패 시 수동 발행용 초안·영상)
 ```
 
+슬랙에는 실행마다 **진행 메시지 1개**가 올라오고, 단계가 끝날 때마다 그 메시지가 갱신됩니다.
+결과물(선택된 사진·전후 비교·원고·영상·발행 결과)은 그 메시지의 **스레드**에 모입니다.
+
+```
+🧹 정기청소 포스팅 진행 중                     → 끝나면 ✅ 정기청소 포스팅 완료
+카테고리 정기청소 · 지역 안산 상록구 본오동 (서비스 지역) · 슬랙 명령 · 요청 hong · 09/28 10:17
+✅ 사진 선택 — 5장 (작업 전 2 · 작업 중 1 · 작업 후 2)
+✅ 사진 정리·전후 비교 — 전후 비교 O · 고객후기 1장
+⏳ AI 원고 작성 진행 중…
+⬜ 틱톡 영상 제작
+⬜ 블로그·틱톡 발행
+⬜ 사용 사진 보관
+결과물은 이 메시지의 스레드에 올라갑니다 | 실행 로그 보기
+  └ 스레드: 📸 선택된 사진 · 🖼️ 전후 비교 · 📝 원고(post.txt) · 🎬 영상 · 결과 카드
+```
+- 도중에 오류가 나면 그 단계가 ❌ 로 바뀌고 오류 내용이 스레드에 남습니다 (중복 알림 없음).
+- GitHub `Actions` 목록에는 `💬 슬랙 포스팅 · 로프청소 [테스트]` 처럼 무엇을 실행했는지 표시되고,
+  실행 페이지의 **Summary** 에 제목·지역·플랫폼별 결과표가 정리됩니다.
+- 패키지 설치 등 파이썬 실행 전 단계에서 실패해도 웹훅으로 실패 알림 + 로그 링크를 보냅니다.
+
 ---
 
 ## 명세서 대비 달라진 점 (중요)
@@ -48,7 +68,9 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
 │  ├─ blog_publisher.py     구글 블로그 (Blogger API v3)
 │  ├─ naver_publisher.py    네이버 블로그 (Playwright)
 │  ├─ tiktok_publisher.py   틱톡 (Content Posting API)
-│  ├─ slack_helper.py       슬랙 알림·리포트 카드
+│  ├─ slack_helper.py       슬랙 알림·리포트 카드 (메시지 수정·스레드·파일 업로드)
+│  ├─ progress.py           슬랙 진행 상황 체크리스트 (단계별 갱신)
+│  ├─ step_summary.py       GitHub Actions 실행 요약(Summary) 작성
 │  ├─ pipeline.py           전체 흐름
 │  └─ cli.py / config.py    실행 인자·환경변수 검증
 ├─ slack_relay/             슬랙 → GitHub 중계 Cloudflare Worker
@@ -57,7 +79,7 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
 ├─ .github/workflows/
 │  ├─ auto_post.yml         자동 포스팅 (스케줄 / 수동 / 슬랙)
 │  └─ ci.yml                테스트
-└─ tests/                   pytest (178개) — 외부 서비스 없이 실행 (네이버 흐름은 로컬 가짜 에디터로 검증)
+└─ tests/                   pytest (234개) — 외부 서비스 없이 실행 (네이버 흐름은 로컬 가짜 에디터로 검증)
 ```
 
 드라이브에는 아래 구조가 **자동 생성**됩니다 (`DRIVE_ROOT_FOLDER_NAME` 폴더 안).
@@ -117,9 +139,9 @@ https://aistudio.google.com/apikey 에서 키 발급 → Secret `GEMINI_API_KEY`
 6. 연결 확인: `python scripts/slack_test.py` (봇·웹훅 각각 테스트 메시지 전송)
 
 ### 4) Cloudflare Worker (슬랙 명령 중계)
-1. GitHub `Settings → Developer settings → Fine-grained tokens` → **이 리포지토리만** 선택 → **Contents: Read and write** 권한으로 토큰 생성
-   (GitHub 의 워크플로 실행 API 가 이 권한을 요구합니다. 유출되면 리포지토리 코드 수정도 가능하므로 만료일을 정하고, 의심되면 즉시 폐기·재발급하세요)
-2. `slack_relay/wrangler.toml` 의 `GITHUB_REPO` 를 `내아이디/리포지토리` 로 수정
+1. GitHub `Settings → Developer settings → Fine-grained tokens` → **이 리포지토리만** 선택 → **Actions: Read and write** 권한 하나만으로 토큰 생성
+   (Worker 는 `auto_post.yml` 워크플로 실행 API 만 호출합니다. 코드 수정 권한은 필요 없습니다. 만료일을 정하고, 의심되면 즉시 폐기·재발급하세요)
+2. `slack_relay/wrangler.toml` 의 `GITHUB_REPO` 확인 (`내아이디/리포지토리`)
 3. 배포:
    ```bash
    cd slack_relay
@@ -173,11 +195,12 @@ Secret `GH_SECRETS_TOKEN` 으로 등록하면 갱신값을 자동으로 시크�
 | `/posting 로프청소` | 카테고리 지정 (`정기`, `로프`, `방역` 처럼 줄여도 됨) |
 | `/posting 정기청소 고잔동` | 실제 현장 위치까지 지정 → 제목·본문에 현장 위치로 사용 |
 | `/posting 테스트` | 발행 없이 원고·영상만 만들어 슬랙으로 미리보기 |
+| `/posting 도움말` | 사용법 안내 (실행하지 않음) |
 | `/posting-setup` | 드라이브 폴더·템플릿 점검 및 연동 상태 보고 |
 
 - 한 번에 단계별 최대 3장(`PHOTOS_PER_STAGE`), 최소 3장(`MIN_PHOTOS`)이 있어야 실행됩니다.
 - **한 곳이라도 발행에 성공하면** 사용한 사진이 `99_사용완료_사진/날짜_카테고리/` 로 이동합니다. 모두 실패하면 사진은 그대로 두어 다음 실행에 재시도합니다.
-- 네이버/틱톡이 실패하면 슬랙에 **수동 발행용 원고와 영상**이 올라옵니다.
+- 네이버/틱톡이 실패하면 진행 메시지 스레드에 **수동 발행용 원고와 영상**이 올라옵니다.
 - 실행 결과물(영상·원고·오류 스크린샷)은 Actions 실행 페이지의 Artifacts 에 7일간 보관됩니다.
 - 스케줄 변경: `.github/workflows/auto_post.yml` 의 `cron` (UTC 기준, KST-9시간)
 
@@ -235,7 +258,10 @@ cd slack_relay && node --test                            # Worker 테스트
 | 네이버 `이미지 업로드가 완료되지 않았습니다` / 셀렉터 오류 | 네이버 에디터 구조 변경. Artifacts 의 `naver_error_*.png` 확인 후 `autopost/naver_publisher.py` 의 `NaverSelectors` 수정 |
 | 네이버가 계속 막힘 | 한국 PC 에 [self-hosted runner](https://docs.github.com/actions/hosting-your-own-runners) 를 설치해 `runs-on: self-hosted` 로 변경 (국내 IP로 실행) |
 | 틱톡 `unaudited_client_can_only_post_to_private_accounts` 등 | 앱 심사 전 제한. `TIKTOK_PRIVACY_LEVEL=SELF_ONLY` 유지 또는 `TIKTOK_MODE=inbox` |
-| 슬랙 명령 후 "dispatch_failed" | Worker URL 오타, Worker 시크릿 누락, PAT 권한(Contents: Read and write) 확인 |
+| 슬랙 명령 후 "dispatch_failed" | Worker URL 오타, Worker 시크릿 누락 확인 |
+| 슬랙 명령 후 `GitHub API HTTP 403/404` | PAT 권한(Actions: Read and write)·대상 리포지토리·만료일 확인 |
+| `GitHub API HTTP 422` | `auto_post.yml` 이 `main` 브랜치에 있는지, 워크플로 입력 이름이 Worker 와 같은지 확인 |
+| 진행 메시지가 갱신되지 않고 줄마다 새로 올라옴 | 봇 토큰(`SLACK_BOT_TOKEN`) 없이 웹훅만 설정된 상태. 봇 토큰을 등록하면 한 메시지로 갱신·스레드 사용 |
 | 블로그 이미지가 안 보임 | `98_블로그_게시이미지` 폴더/파일 삭제 여부 확인 (공개 링크로 게시됨) |
 | 영상 글자가 네모(□)로 나옴 | 한글 폰트 없음. 로컬은 `FONT_PATH` 지정, Actions 는 `fonts-nanum` 자동 설치 |
 

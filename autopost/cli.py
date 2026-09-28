@@ -18,7 +18,7 @@ from .github_secrets import update_github_secret
 from .google_auth import build_blogger_service, build_credentials, build_drive_service
 from .naver_publisher import NaverPublisher
 from .photo_selector import split_request
-from .pipeline import RunOptions, Services, run_post, run_setup
+from .pipeline import AlreadyReported, RunOptions, Services, run_post, run_setup
 from .slack_helper import SlackNotifier
 from .tiktok_publisher import TikTokPublisher
 
@@ -128,8 +128,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             trigger=args.trigger,
             requested_by=args.requested_by,
             location=args.location or location,
+            run_url=os.environ.get("AUTOPOST_RUN_URL", ""),
         )
         return run_post(cfg, options, services)
+    except AlreadyReported:
+        log.exception("실행 중 오류 (슬랙 진행 스레드에 보고됨)")
+        return 1
     except Exception as exc:
         log.exception("실행 중 오류")
         slack.notify_error("초기 세팅" if args.mode == "setup" else "포스팅", exc)

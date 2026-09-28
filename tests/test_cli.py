@@ -1,7 +1,7 @@
 import pytest
 
 from autopost import cli
-from autopost.pipeline import Services
+from autopost.pipeline import AlreadyReported, Services
 from autopost.slack_helper import SlackNotifier
 from fakes import MemoryDrive
 
@@ -66,6 +66,36 @@ def test_post_mode_passes_options(monkeypatch):
     assert captured["options"].category == "로프"
     assert captured["options"].location == "고잔동"  # 슬랙 '/posting 로프 고잔동' 형태
     assert captured["options"].requested_by == "홍길동"
+
+
+def test_post_mode_passes_run_url_from_env(monkeypatch):
+    _google(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    monkeypatch.setenv("BLOGGER_BLOG_ID", "1")
+    monkeypatch.setenv("AUTOPOST_RUN_URL", "https://github.com/o/r/actions/runs/1")
+    monkeypatch.setenv("AUTOPOST_TRIGGER", "slack")
+    captured = {}
+    monkeypatch.setattr(cli, "build_services", lambda cfg, slack, mode: Services(drive=MemoryDrive(), slack=slack))
+    monkeypatch.setattr(cli, "run_post", lambda cfg, options, services: captured.setdefault("options", options) and 0)
+    assert cli.main([]) == 0
+    assert captured["options"].run_url == "https://github.com/o/r/actions/runs/1"
+    assert captured["options"].trigger == "slack"
+
+
+def test_already_reported_error_is_not_notified_twice(monkeypatch):
+    _google(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    monkeypatch.setenv("BLOGGER_BLOG_ID", "1")
+    sent = []
+    monkeypatch.setattr(SlackNotifier, "notify_error", lambda self, stage, error: sent.append(stage))
+    monkeypatch.setattr(cli, "build_services", lambda cfg, slack, mode: Services(drive=MemoryDrive(), slack=slack))
+
+    def reported(cfg, options, services):
+        raise AlreadyReported("Gemini 503")
+
+    monkeypatch.setattr(cli, "run_post", reported)
+    assert cli.main([]) == 1
+    assert sent == []  # 진행 스레드에 이미 보고됨
 
 
 def test_unexpected_error_returns_1_and_notifies(monkeypatch):

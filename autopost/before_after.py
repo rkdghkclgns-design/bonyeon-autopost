@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Mapping, Sequence
 
 from PIL import Image, ImageDraw, ImageOps
 
+from .constants import STAGE_LABELS
 from .fonts import load_font
 
 GAP = 12
@@ -27,6 +29,30 @@ def _label(canvas: Image.Image, x: int, text: str) -> None:
     left, top = x + 20, 20
     draw.rounded_rectangle((left, top, left + w + 40, top + h + 28), radius=18, fill=(0, 0, 0, 170))
     draw.text((left + 20 - bbox[0], top + 14 - bbox[1]), text, font=font, fill=(255, 255, 255, 255))
+
+
+def make_contact_sheet(
+    photos_by_stage: Mapping[str, Sequence[Path]], out_path: Path, thumb: int = 280
+) -> Path | None:
+    """선택된 사진을 단계별 한 줄씩 모은 미리보기 이미지 (슬랙 진행 스레드용)."""
+    rows = [(stage, list(paths)) for stage, paths in photos_by_stage.items() if paths]
+    if not rows:
+        return None
+    label_w, gap = 150, 8
+    cols = max(len(paths) for _, paths in rows)
+    canvas = Image.new("RGB", (label_w + cols * (thumb + gap) + gap, len(rows) * (thumb + gap) + gap), "white")
+    draw = ImageDraw.Draw(canvas)
+    font = load_font(34)
+    for r, (stage, paths) in enumerate(rows):
+        top = gap + r * (thumb + gap)
+        draw.text((16, top + thumb // 2 - 20), STAGE_LABELS.get(stage, stage), font=font, fill=(40, 40, 40))
+        for c, path in enumerate(paths):
+            with Image.open(path) as opened:
+                image = ImageOps.fit(ImageOps.exif_transpose(opened).convert("RGB"), (thumb, thumb))
+            canvas.paste(image, (label_w + gap + c * (thumb + gap), top))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out_path, "JPEG", quality=85)
+    return out_path
 
 
 def make_comparison(before: Path, after: Path, out_path: Path, height: int = PANEL_HEIGHT) -> Path:

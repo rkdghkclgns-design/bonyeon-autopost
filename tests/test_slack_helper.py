@@ -94,22 +94,49 @@ def test_setup_blocks():
 def test_notifier_posts_with_bot_client(tmp_path):
     client = FakeWebClient()
     slack = SlackNotifier(channel_id="C1", client=client)
-    assert slack.enabled
-    slack.notify_start("로프청소", "schedule", "홍길동")
+    assert slack.enabled and slack.can_thread
+    ts = slack.post("시작")
     slack.notify_error("테스트", ValueError("boom"))
+    assert ts == "1700000000.000001"
     assert client.messages[0]["channel"] == "C1"
-    assert "요청: 홍길동" in client.messages[0]["text"]
+    assert client.messages[0]["thread_ts"] is None
     assert "boom" in client.messages[1]["text"]
 
     video = tmp_path / "v.mp4"
     video.write_bytes(b"x")
-    assert slack.upload_file(video, "영상", "코멘트") is True
+    assert slack.upload_file(video, "영상", "코멘트", thread_ts=ts) is True
     assert client.uploads[0]["channel"] == "C1"
+    assert client.uploads[0]["thread_ts"] == ts
+
+
+def test_notifier_threads_and_updates_messages():
+    client = FakeWebClient()
+    slack = SlackNotifier(channel_id="C1", client=client, secrets=["hidden-value-123"])
+    ts = slack.post("부모")
+    slack.post("답글", thread_ts=ts)
+    assert slack.update(ts, "수정됨 hidden-value-123", [{"type": "divider"}]) is True
+    assert client.thread(ts)[0]["text"] == "답글"
+    assert client.updates[0] == {"channel": "C1", "ts": ts, "text": "수정됨 ***", "blocks": [{"type": "divider"}]}
+    assert slack.update("", "x") is False  # ts 없으면 수정 불가
+
+
+def test_update_failure_and_webhook_only_update_are_not_raised():
+    failing = SlackNotifier(channel_id="C1", client=FakeWebClient(fail_update=True))
+    assert failing.update("1.2", "x") is False
+
+    class Hook:
+        def send(self, **kwargs):
+            return None
+
+    webhook_only = SlackNotifier(webhook=Hook())
+    assert not webhook_only.can_thread
+    assert webhook_only.post("x") is None  # 웹훅은 ts 를 돌려주지 않음
+    assert webhook_only.update("1.2", "x") is False
 
 
 def test_notifier_never_raises_on_slack_failure(tmp_path):
     slack = SlackNotifier(channel_id="C1", client=FakeWebClient(fail=True))
-    slack.post("hello")  # 예외가 전파되지 않아야 함
+    assert slack.post("hello") is None  # 예외가 전파되지 않아야 함
     assert slack.upload_file(tmp_path / "x.mp4", "t") is False
 
 
