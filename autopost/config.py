@@ -22,7 +22,7 @@ TIKTOK_PRIVACY_LEVELS = (
 # 최신 flash 를 자동으로 가리키는 별칭 (특정 모델 은퇴에 영향받지 않음)
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 # 기본 모델이 과부하(503)·중단(404)일 때 순서대로 시도
-DEFAULT_GEMINI_FALLBACKS = "gemini-3.8-flash,gemini-3.5-flash,gemini-3-flash-preview"
+DEFAULT_GEMINI_FALLBACKS = "gemini-3.8-flash,gemini-3.5-flash,gemini-3-flash-preview,gemini-2.5-flash,gemini-flash-lite-latest"
 # 진행 단계별 슬랙 채널 (비우면 그 단계 결과물은 알림 채널의 진행 메시지 스레드에 올라감)
 STAGE_CHANNEL_ENV = (
     ("prepare", "SLACK_CHANNEL_PHOTOS"),  # 사진 모음·전후 비교

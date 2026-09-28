@@ -225,14 +225,14 @@ def test_generator_passes_area_to_prompt_and_tags(tmp_path):
 
 def test_generator_retries_then_succeeds(tmp_path):
     image = make_jpeg(tmp_path / "a.jpg")
-    client = FakeGeminiClient([RuntimeError("quota"), "not json", ai_json(stages=("작업전",))])
+    client = FakeGeminiClient([RuntimeError("quota"), "not json", _long_json("작업전")])
     sleeps = []
     generator = ContentGenerator("key", "gemini-test", "본연", "010", client=client, sleep=sleeps.append)
 
     content = generator.generate("로프청소", {"작업전": [image]})
 
     assert [s.stage for s in content.sections] == ["작업전"]
-    assert sleeps == [2, 4]
+    assert sleeps == [15, 30]
     call = client.models.calls[-1]
     assert call["model"] == "gemini-test"
     assert call["contents"][0] == "[작업 전 사진 1]"
@@ -257,7 +257,7 @@ def test_generator_counts_all_model_attempts(tmp_path):
     image = make_jpeg(tmp_path / "a.jpg")
     client = FakeGeminiClient([RuntimeError("503")] * 6)
     generator = ContentGenerator("key", "a", "본연", "010", client=client, sleep=lambda _: None,
-                                 fallback_models=["b"])
+                                 fallback_models=["b"], max_attempts=3)
     with pytest.raises(ContentGenerationError, match="6회"):
         generator.generate("로프청소", {"작업후": [image]})
     assert [c["model"] for c in client.models.calls] == ["a", "b"] * 3
@@ -266,6 +266,6 @@ def test_generator_counts_all_model_attempts(tmp_path):
 def test_generator_gives_up_after_max_attempts(tmp_path):
     image = make_jpeg(tmp_path / "a.jpg")
     client = FakeGeminiClient([RuntimeError("x")] * 3)
-    generator = ContentGenerator("key", "m", "본연", "010", client=client, sleep=lambda _: None)
+    generator = ContentGenerator("key", "m", "본연", "010", client=client, sleep=lambda _: None, max_attempts=3)
     with pytest.raises(ContentGenerationError, match="3회"):
         generator.generate("로프청소", {"작업후": [image]})

@@ -25,6 +25,7 @@ MIN_CHARS_BASE = 600  # 본문 최소 분량 = 기본 + 사진당 가산 (공백
 MIN_CHARS_PER_PHOTO = 100
 MOBILE_LINE = 24  # 네이버 모바일 글처럼 한 줄 24자 안팎
 MOBILE_SLACK = 6  # 문장이 30자 이하면 한 줄로 둔다
+RETRY_WAIT_SECONDS = 15  # 모든 모델이 실패한 라운드 뒤 대기 (라운드마다 늘어남)
 MIN_LAST_LINE = 8  # 마지막 줄이 이보다 짧으면('있습니다.' 만 남는 등) 앞줄에 붙인다
 # 자연스럽게 줄을 끊을 수 있는 어절 끝 (쉼표·연결어미·부사격 조사)
 NATURAL_BREAK = re.compile(r"(,|고|며|서|면|지만|는데|도록|으로|에서|처럼|까지|부터|하여|해서|되어|하게|위해|해|아|어|여)$")
@@ -375,7 +376,7 @@ class ContentGenerator:
         company: str,
         phone: str,
         client=None,
-        max_attempts: int = 3,
+        max_attempts: int = 4,
         sleep: Callable[[float], None] = time.sleep,
         fallback_models: Sequence[str] = (),
     ) -> None:
@@ -443,7 +444,7 @@ class ContentGenerator:
                     f"공백 제외 {min_chars}자 이상이 되도록 사진 설명, 공정 이유, 관리 TIP 을 더 자세히 쓰세요."
                 )]
             if attempt < self._max_attempts:
-                self._sleep(2 ** attempt)
+                self._sleep(RETRY_WAIT_SECONDS * attempt)  # 과부하(503)가 풀리도록 15·30·45초 대기
         if shortest_ok is not None:
             return shortest_ok
         raise ContentGenerationError(f"AI 원고 생성에 {total}회 실패했습니다: {last_error}")
