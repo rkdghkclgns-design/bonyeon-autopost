@@ -3,26 +3,38 @@
 사전 준비 (README '틱톡' 항목 참고)
   1. https://developers.tiktok.com 에서 앱 생성 → Login Kit + Content Posting API 추가
   2. 스코프: user.info.basic, video.publish, video.upload
-  3. Redirect URI 등록 (https 주소, 예: 내 구글 블로그 주소 https://xxxx.blogspot.com/)
+  3. Login Kit 의 Redirect URI 에 --redirect-uri 값(기본: 본연클린 구글 블로그 주소)을 등록
 
 실행
-  python scripts/get_tiktok_token.py --client-key KEY --client-secret SECRET --redirect-uri https://xxxx.blogspot.com/
+  python scripts/get_tiktok_token.py
 
-1. 출력되는 주소를 브라우저로 열어 틱톡 계정으로 로그인·허용
-2. Redirect URI 로 이동된 뒤의 '주소창 전체 URL' 을 복사해 터미널에 붙여넣기
+1. Client Key / Client Secret 을 묻는 작은 창에 붙여넣기 (.env 에 이미 있으면 묻지 않음)
+2. 열린 크롬 창에서 틱톡 계정으로 직접 로그인 → '허용'
+3. 발급된 값을 .env 와 GitHub 시크릿(gh CLI)에 자동 저장 — 화면에는 값을 출력하지 않음
 """
 from __future__ import annotations
 
 import argparse
+import os
 import secrets
 import sys
+from pathlib import Path
+from typing import Callable, Mapping
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from autopost.local_secrets import save_everywhere  # noqa: E402
+from autopost.setup_browser import launch_visible_browser  # noqa: E402
+
 AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 SCOPES = "user.info.basic,video.publish,video.upload"
+DEFAULT_REDIRECT_URI = "https://bonyeon-clean.blogspot.com/"
+
+Prompt = Callable[[str, str, bool], str]
 
 
 def build_authorize_url(client_key: str, redirect_uri: str, state: str) -> str:
@@ -48,48 +60,132 @@ def extract_code(redirected_url: str, expected_state: str) -> str:
     return code
 
 
+def is_redirect(url: str, redirect_uri: str) -> bool:
+    """틱톡 인증 후 우리 Redirect URI 로 돌아왔는지 (code 또는 error 포함)."""
+    parsed, target = urlparse(url), urlparse(redirect_uri)
+    same_place = (parsed.scheme, parsed.netloc, parsed.path.rstrip("/")) == (
+        target.scheme, target.netloc, target.path.rstrip("/"))
+    query = parse_qs(parsed.query)
+    return same_place and ("code" in query or "error" in query)
+
+
+def tk_prompt(title: str, message: str, secret: bool) -> str:
+    """터미널 없이도 값을 붙여넣을 수 있는 작은 입력 창."""
+    import tkinter as tk
+    from tkinter import simpledialog
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    value = simpledialog.askstring(title, message, parent=root, **({"show": "*"} if secret else {}))
+    root.destroy()
+    return (value or "").strip()
+
+
+def resolve_credentials(existing: Mapping[str, str], prompt: Prompt = tk_prompt) -> tuple[str, str]:
+    """.env/환경변수에 있으면 그 값을, 없으면 입력 창으로 묻는다."""
+    key = existing.get("TIKTOK_CLIENT_KEY", "").strip() or prompt(
+        "틱톡 설정 (1/2)", "틱톡 개발자 앱의 Client Key 를 붙여넣으세요", False)
+    secret = existing.get("TIKTOK_CLIENT_SECRET", "").strip() or prompt(
+        "틱톡 설정 (2/2)", "틱톡 개발자 앱의 Client Secret 을 붙여넣으세요 (화면에 * 로 표시)", True)
+    if not key or not secret:
+        raise ValueError("Client Key / Client Secret 이 입력되지 않았습니다.")
+    return key, secret
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition("=")
+                values[key.strip()] = value.strip()
+    return values
+
+
+def wait_for_redirect(page, redirect_uri: str, timeout_s: float, poll_ms: int = 1000) -> str:
+    for _ in range(max(1, int(timeout_s * 1000 / poll_ms))):
+        if is_redirect(page.url, redirect_uri):
+            return page.url
+        page.wait_for_timeout(poll_ms)
+    return ""
+
+
+def authorize_in_browser(client_key: str, redirect_uri: str, state: str, timeout_s: float) -> str:
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = launch_visible_browser(playwright.chromium)
+        page = browser.new_context(locale="ko-KR").new_page()
+        page.goto(build_authorize_url(client_key, redirect_uri, state))
+        print(f"열린 창에서 틱톡에 로그인하고 '허용'을 누르세요. 최대 {int(timeout_s // 60)}분 기다립니다...")
+        redirected = wait_for_redirect(page, redirect_uri, timeout_s)
+        browser.close()
+    return redirected
+
+
+def exchange_code(client_key: str, client_secret: str, code: str, redirect_uri: str, post=requests.post) -> dict:
+    response = post(
+        TOKEN_URL,
+        data={
+            "client_key": client_key,
+            "client_secret": client_secret,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=30,
+    )
+    return response.json()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="틱톡 refresh token 발급")
-    parser.add_argument("--client-key", required=True)
-    parser.add_argument("--client-secret", required=True)
-    parser.add_argument("--redirect-uri", required=True)
+    parser.add_argument("--redirect-uri", default=DEFAULT_REDIRECT_URI,
+                        help=f"Login Kit 에 등록한 Redirect URI (기본: {DEFAULT_REDIRECT_URI})")
+    parser.add_argument("--env", default=".env", help="값을 저장할 .env 경로 (기본: .env)")
+    parser.add_argument("--no-upload", action="store_true", help="GitHub 시크릿 등록을 건너뜀")
+    parser.add_argument("--timeout", type=float, default=600, help="로그인 대기 시간(초), 기본 10분")
     args = parser.parse_args()
 
-    state = secrets.token_urlsafe(16)
-    print("\n1) 아래 주소를 브라우저에서 열어 로그인·허용하세요:\n")
-    print(build_authorize_url(args.client_key, args.redirect_uri, state))
-    redirected = input("\n2) 이동된 페이지의 주소창 URL 전체를 붙여넣으세요: ")
+    env_path = Path(args.env)
+    try:
+        client_key, client_secret = resolve_credentials({**os.environ, **read_env_file(env_path)})
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return 1
 
+    state = secrets.token_urlsafe(16)
+    redirected = authorize_in_browser(client_key, args.redirect_uri, state, args.timeout)
+    if not redirected:
+        print("❌ 틱톡 허용이 확인되지 않았습니다 (시간 초과 또는 창을 닫음). 다시 실행하세요.")
+        return 1
     try:
         code = extract_code(redirected, state)
     except ValueError as exc:
         print(f"❌ {exc}")
         return 1
 
-    response = requests.post(
-        TOKEN_URL,
-        data={
-            "client_key": args.client_key,
-            "client_secret": args.client_secret,
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": args.redirect_uri,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=30,
-    )
-    payload = response.json()
+    payload = exchange_code(client_key, client_secret, code, args.redirect_uri)
     if "refresh_token" not in payload:
         print(f"❌ 토큰 발급 실패: {payload.get('error')} - {payload.get('error_description')}")
         return 1
 
+    values = {
+        "TIKTOK_CLIENT_KEY": client_key,
+        "TIKTOK_CLIENT_SECRET": client_secret,
+        "TIKTOK_REFRESH_TOKEN": payload["refresh_token"],
+    }
+    failed = save_everywhere(values, env_path, upload=not args.no_upload)
     days = int(payload.get("refresh_expires_in", 0)) // 86400
-    print("\n✅ 발급 완료! 아래 값을 GitHub 시크릿에 등록하세요 (외부에 공유 금지)\n")
-    print(f"TIKTOK_CLIENT_KEY={args.client_key}")
-    print(f"TIKTOK_CLIENT_SECRET={args.client_secret}")
-    print(f"TIKTOK_REFRESH_TOKEN={payload['refresh_token']}")
-    print(f"\n(refresh token 유효기간: 약 {days}일 — 만료 전에 이 스크립트를 다시 실행하세요)")
-    print(f"(허용된 스코프: {payload.get('scope', '')})")
+    print(f"✅ {args.env} 에 저장: {', '.join(values)}")
+    print(f"   refresh token 유효기간 약 {days}일 · 허용된 스코프: {payload.get('scope', '')}")
+    if failed:
+        print(f"⚠️ GitHub 시크릿 등록 실패: {', '.join(failed)} — gh CLI 로그인(gh auth status)을 확인하세요.")
+        return 1
+    if not args.no_upload:
+        print("✅ GitHub 시크릿 등록 완료: " + ", ".join(values))
     return 0
 
 

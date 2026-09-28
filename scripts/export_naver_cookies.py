@@ -17,16 +17,15 @@ from __future__ import annotations
 
 import argparse
 import re
-import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Mapping
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from autopost.envfile import update_env_file  # noqa: E402
+from autopost.local_secrets import save_everywhere  # noqa: E402
 from autopost.naver_publisher import encode_storage_state  # noqa: E402
+from autopost.setup_browser import launch_visible_browser  # noqa: E402
 
 LOGIN_URL = "https://nid.naver.com/nidlogin.login"
 MY_BLOG_URL = "https://blog.naver.com/MyBlog.naver"  # 로그인 상태면 내 블로그 주소로 이동
@@ -50,21 +49,6 @@ def blog_id_from_url(url: str) -> str | None:
     return None
 
 
-def upload_secrets(
-    values: Mapping[str, str], run: Callable[..., subprocess.CompletedProcess] = subprocess.run
-) -> list[str]:
-    """gh CLI 로 GitHub 시크릿 등록 (값은 표준입력으로만 전달). 실패한 이름 목록을 돌려준다."""
-    failed = []
-    for name, value in values.items():
-        try:
-            result = run(["gh", "secret", "set", name], input=value, text=True, capture_output=True)
-        except FileNotFoundError:
-            return list(values)
-        if result.returncode != 0:
-            failed.append(name)
-    return failed
-
-
 def ask_blog_id() -> str:
     while True:
         typed = input("블로그 주소 blog.naver.com/ 뒤의 아이디를 입력하세요: ").strip()
@@ -85,17 +69,6 @@ def wait_for_login(context, page, timeout_s: float, poll_ms: int = 2000) -> bool
             return True
         page.wait_for_timeout(poll_ms)
     return False
-
-
-def launch_visible_browser(chromium):
-    """설치된 크롬 → 엣지 → Playwright 내장 크롬 순으로 창을 띄운다 (PC 보안정책에 따라 내장 크롬이 막히는 경우 대비)."""
-    last_error: Exception | None = None
-    for channel in ("chrome", "msedge", None):
-        try:
-            return chromium.launch(headless=False, **({"channel": channel} if channel else {}))
-        except Exception as exc:
-            last_error = exc
-    raise RuntimeError(f"브라우저 창을 열 수 없습니다: {last_error}")
 
 
 def capture_session(timeout_s: float) -> tuple[dict, str | None]:
@@ -145,12 +118,10 @@ def main() -> int:
         return 1
 
     values = {"NAVER_BLOG_ID": blog_id, "NAVER_STORAGE_STATE_B64": encode_storage_state(state)}
-    update_env_file(Path(args.env), values)
+    failed = save_everywhere(values, Path(args.env), upload=not args.no_upload)
     print(f"✅ {args.env} 에 저장: {', '.join(values)}")
-
     if args.no_upload:
         return 0
-    failed = upload_secrets(values)
     if failed:
         print(f"⚠️ GitHub 시크릿 등록 실패: {', '.join(failed)} — gh CLI 로그인(gh auth status)을 확인하세요.")
         return 1

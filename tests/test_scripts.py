@@ -32,19 +32,6 @@ def test_blog_id_from_url(url, expected):
     assert naver.blog_id_from_url(url) == expected
 
 
-def test_upload_secrets_sends_values_via_stdin_only():
-    calls = []
-
-    def fake_run(cmd, input, text, capture_output):
-        calls.append((cmd, input))
-        return type("R", (), {"returncode": 1 if cmd[-1] == "B" else 0})()
-
-    failed = naver.upload_secrets({"A": "secret-a", "B": "secret-b"}, run=fake_run)
-    assert failed == ["B"]
-    assert calls[0] == (["gh", "secret", "set", "A"], "secret-a")  # 값은 명령줄 인자에 넣지 않음
-    assert all("secret-" not in " ".join(cmd) for cmd, _ in calls)
-
-
 class _FakeLoginPage:
     def __init__(self):
         self.waits = []
@@ -77,36 +64,6 @@ def test_wait_for_login_times_out():
     assert len(page.waits) == 3
 
 
-def test_launch_visible_browser_falls_back_through_channels():
-    tried = []
-
-    class Chromium:
-        def launch(self, headless, channel=None):
-            tried.append(channel)
-            if channel != "msedge":
-                raise RuntimeError("spawn UNKNOWN")
-            return "edge-browser"
-
-    assert naver.launch_visible_browser(Chromium()) == "edge-browser"
-    assert tried == ["chrome", "msedge"]
-
-
-def test_launch_visible_browser_reports_last_error():
-    class Broken:
-        def launch(self, headless, channel=None):
-            raise RuntimeError(f"no {channel}")
-
-    with pytest.raises(RuntimeError, match="no None"):
-        naver.launch_visible_browser(Broken())
-
-
-def test_upload_secrets_without_gh_cli_reports_all_failed():
-    def missing(*args, **kwargs):
-        raise FileNotFoundError("gh")
-
-    assert naver.upload_secrets({"A": "1", "B": "2"}, run=missing) == ["A", "B"]
-
-
 def test_authorize_url_contains_required_params():
     url = tiktok.build_authorize_url("key123", "https://me.blogspot.com/", "st")
     params = parse_qs(urlparse(url).query)
@@ -129,3 +86,67 @@ def test_extract_code_decodes_and_checks_state():
 def test_extract_code_errors(url, message):
     with pytest.raises(ValueError, match=message):
         tiktok.extract_code(url, "st")
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://bonyeon-clean.blogspot.com/?code=abc&state=s", True),
+    ("https://bonyeon-clean.blogspot.com?error=access_denied&state=s", True),
+    ("https://bonyeon-clean.blogspot.com/", False),  # 아직 code 없음
+    ("https://www.tiktok.com/v2/auth/authorize/?redirect_uri=https://bonyeon-clean.blogspot.com/&code=x", False),
+    ("https://evil.example/?code=abc", False),
+])
+def test_is_redirect(url, expected):
+    assert tiktok.is_redirect(url, "https://bonyeon-clean.blogspot.com/") is expected
+
+
+def test_resolve_credentials_uses_env_then_prompts():
+    asked = []
+
+    def prompt(title, message, secret):
+        asked.append(secret)
+        return " typed-secret "
+
+    assert tiktok.resolve_credentials({"TIKTOK_CLIENT_KEY": "key"}, prompt) == ("key", "typed-secret")
+    assert asked == [True]  # 이미 있는 키는 묻지 않고, 비밀값 입력창은 가림 처리
+    with pytest.raises(ValueError, match="입력되지"):
+        tiktok.resolve_credentials({}, lambda *a: "")
+
+
+def test_read_env_file_ignores_comments(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("# TIKTOK_CLIENT_KEY=nope\nTIKTOK_CLIENT_KEY= k1 \nEMPTY=\n", encoding="utf-8")
+    assert tiktok.read_env_file(env) == {"TIKTOK_CLIENT_KEY": "k1", "EMPTY": ""}
+    assert tiktok.read_env_file(tmp_path / "missing") == {}
+
+
+def test_wait_for_redirect_polls_until_code_arrives():
+    class Page:
+        def __init__(self):
+            self.urls = iter(["https://www.tiktok.com/login", "https://r.example/?code=c&state=s"])
+            self.url = next(self.urls)
+
+        def wait_for_timeout(self, ms):
+            self.url = next(self.urls, self.url)
+
+    assert tiktok.wait_for_redirect(Page(), "https://r.example/", timeout_s=5) == "https://r.example/?code=c&state=s"
+
+
+def test_wait_for_redirect_times_out():
+    class Page:
+        url = "https://www.tiktok.com/login"
+
+        def wait_for_timeout(self, ms):
+            pass
+
+    assert tiktok.wait_for_redirect(Page(), "https://r.example/", timeout_s=2) == ""
+
+
+def test_exchange_code_posts_form():
+    sent = {}
+
+    def post(url, data, headers, timeout):
+        sent.update(url=url, data=data)
+        return type("R", (), {"json": lambda self: {"refresh_token": "r"}})()
+
+    assert tiktok.exchange_code("k", "s", "c", "https://r/", post=post) == {"refresh_token": "r"}
+    assert sent["data"]["grant_type"] == "authorization_code" and sent["data"]["client_secret"] == "s"
