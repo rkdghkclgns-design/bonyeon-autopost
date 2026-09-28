@@ -28,6 +28,10 @@ STAGE_LABELS = {
     STAGE_AFTER: "작업 후",
 }
 
+# 출장·상담 가능 범위 — 글의 지역 키워드(검색용)와 별개로 항상 이 문구를 쓴다
+SERVICE_AREA = "수도권"
+SERVICE_AREA_LINE = f"{SERVICE_AREA} 전 지역 출장·상담 가능합니다."
+
 
 @dataclass(frozen=True)
 class Category:

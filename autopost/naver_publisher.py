@@ -80,9 +80,6 @@ def build_blocks(
     blocks: list[NaverBlock] = []
     if header is not None:
         blocks.append(NaverBlock("image", image=header))
-    if comparison is not None:  # 헤더 바로 아래 전후 비교 — 글을 열자마자 결과 사진이 보이도록
-        blocks.append(NaverBlock("image", image=comparison))
-        blocks.append(NaverBlock("text", text=COMPARISON_CAPTION))
     blocks.append(NaverBlock("text", text=content.intro))
     for stage in STAGES:
         images = images_by_stage.get(stage, ())
@@ -98,6 +95,9 @@ def build_blocks(
             caption = section.caption_for(index) if section else ""
             if caption:
                 blocks.append(NaverBlock("text", text=caption))
+    if comparison is not None:  # 작업 후 사진 다음 — 결과를 한 장으로 정리
+        blocks.append(NaverBlock("image", image=comparison))
+        blocks.append(NaverBlock("text", text=COMPARISON_CAPTION))
     if reviews:
         blocks.append(NaverBlock("heading", text=f"“ {REVIEW_HEADING} ”"))
         blocks.extend(NaverBlock("image", image=path) for path in reviews)

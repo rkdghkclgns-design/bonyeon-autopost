@@ -77,7 +77,7 @@ NAVER_PAGE = """<!doctype html>
 <style>
   body {{ margin:0; background:#f5f6f7; font-family:'Nanum Gothic','나눔고딕','Malgun Gothic',sans-serif; color:#333; }}
   .top {{ background:#03c75a; color:#fff; padding:12px 16px; font-weight:bold; }}
-  main {{ max-width:693px; margin:0 auto; background:#fff; padding:28px 20px 48px; }}
+  main {{ max-width:720px; margin:0 auto; background:#fff; padding:24px 16px 48px; }}
   .note {{ background:#fff8e1; border:1px solid #f0d58a; border-radius:8px; padding:10px 14px; font-size:.9em; margin-bottom:20px; }}
   h1 {{ font-size:1.6em; line-height:1.4; margin:4px 0 8px; font-weight:normal; }}
   .meta {{ color:#999; font-size:.85em; border-bottom:1px solid #eee; padding-bottom:16px; margin-bottom:28px; }}
@@ -85,7 +85,7 @@ NAVER_PAGE = """<!doctype html>
   p {{ margin:0; font-size:16px; line-height:1.8; min-height:1.8em; }}
   p.rule {{ color:#146c94; letter-spacing:-1px; }}
   p.heading {{ font-weight:bold; font-size:17px; }}
-  img {{ display:block; max-width:100%; margin:12px auto; }}
+  img {{ display:block; max-width:100%; height:auto; margin:28px auto 12px; border-radius:8px; }}
   .tags {{ margin-top:36px; border-top:1px solid #eee; padding-top:16px; }}
   .tags span {{ display:inline-block; color:#03c75a; margin:0 10px 8px 0; font-size:.95em; }}
 </style></head>
@@ -111,7 +111,10 @@ def render_naver_preview(
     note: str = "미리보기 — 아직 어디에도 게시되지 않았습니다.",
     blog: str = "네이버 블로그",
 ) -> str:
-    """네이버 스마트에디터에 들어가는 블록(가운데 정렬, 글 한 줄 = 한 문단, 빈 줄 = 빈 문단) 순서 그대로 보여준다."""
+    """네이버 스마트에디터에 들어가는 블록(가운데 정렬, 글 한 줄 = 한 문단, 빈 줄 = 빈 문단) 순서 그대로 보여준다.
+
+    사진 폭·간격은 구글 미리보기와 같게 맞춰 두 플랫폼을 나란히 비교할 수 있게 한다.
+    """
     from .naver_publisher import HEADING_RULE, build_blocks  # 네이버 모듈은 필요할 때만
 
     parts: list[str] = []

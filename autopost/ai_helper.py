@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from .constants import CATEGORY_DESCRIPTIONS, STAGE_LABELS, STAGES
+from .constants import CATEGORY_DESCRIPTIONS, SERVICE_AREA, SERVICE_AREA_LINE, STAGE_LABELS, STAGES
 from .regions import AreaPick
 
 log = logging.getLogger(__name__)
@@ -99,23 +99,34 @@ def min_body_chars(photo_counts: Mapping[str, int]) -> int:
 
 def area_rules(area: AreaPick | None, category: str, company: str) -> tuple[str, str]:
     """(제목 예시, 지역 규칙) — 실제 현장 위치와 '서비스 지역 키워드'를 구분해 거짓 위치를 쓰지 않게 한다."""
+    service = f"outro 에 '{SERVICE_AREA_LINE}' 한 줄을 그대로 넣습니다."
     if area is None:
-        return f"[{category}] ○○ 현장, ○○까지 깔끔하게", "지역명은 쓰지 않습니다."
+        return f"[{category}] ○○ 현장, ○○까지 깔끔하게", f"지역명은 쓰지 않습니다. {service}"
     if area.is_site:
         place = area.dong or area.region
-        wide = area.region or place
         return (
             f"[{place} {category}] ○○ 현장, ○○까지 깔끔하게",
             f"이번 현장은 실제로 '{area.label}'에 있습니다. title·intro 에 '{place} {category}' 를 자연스럽게 넣되 "
-            f"더 구체적인 주소·건물명은 쓰지 않습니다. outro 에 '{wide} 전 지역 출장·상담 가능' 한 줄을 넣습니다.",
+            f"더 구체적인 주소·건물명은 쓰지 않습니다. {service}",
         )
     return (
         f"○○ 현장, ○○까지 깔끔하게 | {area.region} {category} {company}",
         f"서비스 지역 키워드는 '{area.region}'(대표 동: {area.dong}) 입니다. 이번 현장의 실제 위치는 알 수 없으므로 "
         f"현장이 {area.dong or area.region}에 있었다고 쓰지 마세요. title 은 위 예시처럼 끝에 "
-        f"'| {area.region} {category} {company}' 를 붙이고, intro 에는 지역명을 쓰지 않으며, "
-        f"outro 에 '{area.dong} 등 {area.region} 전 지역 출장·상담 가능' 한 줄을 넣습니다.",
+        f"'| {area.region} {category} {company}' 를 붙이고, intro 에는 지역명을 쓰지 않으며, {service}",
     )
+
+
+# '청담동 등 서울 강남구 전 지역 출장…' 처럼 출장 문구 앞에 붙은 지역 표현 (문장 첫 글자부터)
+_SERVICE_PREFIX = re.compile(r"[^\s.!?][^\n.!?]*?전\s*지역\s*(?=출장)")
+
+
+def with_service_area(outro: str) -> str:
+    """출장 가능 범위를 항상 '수도권 전 지역'으로 맞춘다 — AI 가 지역 키워드로 좁혀 쓰거나 빠뜨려도."""
+    fixed = _SERVICE_PREFIX.sub(f"{SERVICE_AREA} 전 지역 ", outro)
+    if "출장" in fixed:
+        return fixed
+    return f"{fixed.rstrip()}\n{SERVICE_AREA_LINE}"
 
 
 def normalize_hashtags(
@@ -292,7 +303,7 @@ def parse_content(
         title=_text(data.get("title"), "title")[:120],
         intro=wrap_mobile(_text(data.get("intro"), "intro")),
         sections=sections,
-        outro=wrap_mobile(_text(data.get("outro"), "outro")),
+        outro=wrap_mobile(with_service_area(_text(data.get("outro"), "outro"))),
         hashtags=normalize_hashtags(
             raw_tags if isinstance(raw_tags, list) else [], category, company,
             priority=area.hashtags(category) if area else (),

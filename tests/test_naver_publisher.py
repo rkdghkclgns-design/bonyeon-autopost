@@ -38,20 +38,21 @@ def test_build_blocks_order():
     assert blocks[before_idx + 3].text == "작업전 첫 사진 설명"
 
 
-def test_build_blocks_comparison_first_then_reviews_tips_before_outro():
+def test_build_blocks_comparison_after_photos_then_reviews_tips_before_outro():
     content = parse_content(ai_json(title="[수원 로프청소] 현장"), "로프청소", "본연")
     blocks = build_blocks(
         content, {"작업후": [Path("a.jpg")]}, header=Path("h.png"), comparison=Path("cmp.jpg"),
         reviews=[Path("rv.jpg")],
     )
-    # 헤더 → 전후 비교(+설명) → 인사말: 글을 열자마자 결과 사진이 보이도록
-    assert [b.image.name if b.image else b.text for b in blocks[:3]] == ["h.png", "cmp.jpg", "작업 전(좌) · 작업 후(우)"]
-    assert blocks[3].text == content.intro
+    assert blocks[0].image == Path("h.png") and blocks[1].text == content.intro
     assert sum(1 for b in blocks if b.image == Path("cmp.jpg")) == 1
+    # 작업 후 사진 → 그 설명 → 전후 비교(+설명) → 고객후기 → 관리 TIP
     idx = next(i for i, b in enumerate(blocks) if b.image == Path("a.jpg"))
     after = [(b.kind, b.text or b.image.name) for b in blocks[idx + 1:]]
-    assert after[:6] == [
+    assert after[:8] == [
         ("text", "작업후 첫 사진 설명"),
+        ("image", "cmp.jpg"),
+        ("text", "작업 전(좌) · 작업 후(우)"),
         ("heading", "“ 고객님이 남겨주신 후기 ”"),
         ("image", "rv.jpg"),
         ("text", "실제 고객님께서 남겨주신 후기입니다 (게시 동의를 받았습니다)"),

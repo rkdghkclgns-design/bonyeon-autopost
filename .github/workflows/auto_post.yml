@@ -9,8 +9,9 @@ run-name: >-
 
 on:
   schedule:
-    # 평일 10:17 (KST) = UTC 01:17. 정각은 GitHub 부하로 지연이 잦아 17분으로 설정
-    - cron: "17 1 * * 1-5"
+    # 매일 07:00 · 17:00 (KST) = UTC 22:00(전날) · 08:00. GitHub 부하로 수~수십 분 늦게 시작될 수 있음
+    - cron: "0 22 * * *"
+    - cron: "0 8 * * *"
   workflow_dispatch:
     inputs:
       mode:

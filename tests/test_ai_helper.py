@@ -159,7 +159,7 @@ def test_prompt_coverage_area_never_claims_site_location():
     prompt = build_prompt("본연클린", "010", "로프청소", {"작업후": 1}, area=COVERAGE)
     assert "| 안산 단원구 로프청소 본연클린" in prompt
     assert "현장이 고잔동에 있었다고 쓰지 마세요" in prompt
-    assert "고잔동 등 안산 단원구 전 지역 출장·상담 가능" in prompt
+    assert "수도권 전 지역 출장·상담 가능" in prompt and "단원구 전 지역" not in prompt
     assert "1,300~1,800자" in prompt and '"tips"' in prompt
 
 
@@ -167,7 +167,20 @@ def test_prompt_site_area_uses_actual_location():
     prompt = build_prompt("본연클린", "010", "정기청소", {"작업후": 1}, area=SITE)
     assert "[고잔동 정기청소]" in prompt
     assert "실제로 '안산 단원구 고잔동'에 있습니다" in prompt
-    assert "안산 단원구 전 지역 출장·상담 가능" in prompt
+    assert "수도권 전 지역 출장·상담 가능" in prompt and "단원구 전 지역" not in prompt
+
+
+@pytest.mark.parametrize("outro,expected", [
+    ("감사합니다.\n청담동 등 서울 강남구 전 지역 출장·상담 가능합니다.", "수도권 전 지역 출장·상담 가능합니다."),
+    ("서울 강남구 전 지역 출장 상담 가능하니 편하게 연락주세요.", "수도권 전 지역 출장 상담 가능하니 편하게 연락주세요."),
+    ("상담은 000-0000-0000 으로 연락주세요.", "수도권 전 지역 출장·상담 가능합니다."),
+])
+def test_outro_service_area_is_always_capital_region(outro, expected):
+    # 지역 키워드(청담동·강남구 등)와 상관없이 출장 가능 범위는 '수도권 전 지역'으로 고정
+    content = parse_content(ai_json(outro=outro), "정기청소", "본연", area=COVERAGE)
+    flat = content.outro.replace("\n", " ")
+    assert expected in flat
+    assert "강남구 전 지역" not in flat and flat.count("출장") == 1
 
 
 def test_area_hashtags_and_keyword():
