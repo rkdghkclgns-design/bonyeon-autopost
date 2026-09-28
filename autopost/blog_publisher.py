@@ -16,8 +16,9 @@ PLATFORM = "구글 블로그"
 MAX_LABELS = 6
 
 
-TEXT_STYLE = "text-align:center;line-height:1.9;margin:0 0 18px;"  # 문장(문단) 사이 한 줄 띄움
-CAPTION_STYLE = "text-align:center;line-height:1.8;margin:0 0 14px;color:#333;"
+# 문장마다 문단을 나누고 문단 사이를 빈 줄 한 줄만큼(≈30px) 띄워, 문장 안 줄바꿈과 문장 사이가 구분되게 한다
+TEXT_STYLE = "text-align:center;line-height:1.9;margin:0 0 30px;"
+CAPTION_STYLE = "text-align:center;line-height:1.8;margin:0 0 26px;color:#333;"
 QUOTE_STYLE = (
     "text-align:center;margin:36px auto 18px;padding:14px 20px;max-width:560px;"
     "border-top:2px solid #146c94;border-bottom:2px solid #146c94;font-size:1.15em;"

@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,10 +21,17 @@ log = logging.getLogger(__name__)
 
 HASHTAG_COUNT = 15
 MAX_HASHTAG_LEN = 30
-MIN_CHARS_BASE = 400  # 본문 최소 분량 = 기본 + 사진당 가산 (공백 제외)
-MIN_CHARS_PER_PHOTO = 60
+MIN_CHARS_BASE = 600  # 본문 최소 분량 = 기본 + 사진당 가산 (공백 제외) — 사진 5장이면 1,100자
+MIN_CHARS_PER_PHOTO = 100
 MOBILE_LINE = 24  # 네이버 모바일 글처럼 한 줄 24자 안팎
 MOBILE_SLACK = 6  # 문장이 30자 이하면 한 줄로 둔다
+MIN_LAST_LINE = 8  # 마지막 줄이 이보다 짧으면('있습니다.' 만 남는 등) 앞줄에 붙인다
+# 자연스럽게 줄을 끊을 수 있는 어절 끝 (쉼표·연결어미·부사격 조사)
+NATURAL_BREAK = re.compile(r"(,|고|며|서|면|지만|는데|도록|으로|에서|처럼|까지|부터|하여|해서|되어|하게|위해|해|아|어|여)$")
+# 억지로 끊어야 할 때 차선책: 조사로 끝나는 어절 뒤 ('바닥 자동 / 세정기' 처럼 명사 사이를 끊지 않도록)
+PHRASE_END = re.compile(r"(을|를|은|는|이|가|에|의|도|와|과|로|라|나)$")
+# '유지해 / 드리고' 처럼 보조동사 앞에서는 끊지 않는다
+AUXILIARY = re.compile(r"^(드리|드립|드려|드렸|주|줍|줘|줬|보|봅|봤|있|놓|두|버리|버렸|냈|내|낸)")
 SENTENCE_END = re.compile(r"([.!?…~)]|[.!?][\"'”’]|[다요죠])$")  # 줄 끝이 문장 끝인지
 STANDALONE_LINE = re.compile(r"[:：]|\d{2,4}-\d{3,4}-\d{4}$")  # '문의: 010-…' 처럼 홀로 쓰는 줄
 TIKTOK_CAPTION_MAX = 2000
@@ -145,13 +151,56 @@ def _text(value: object, field: str) -> str:
     return value.strip()
 
 
+def _joined_len(words: Sequence[str]) -> int:
+    return len(" ".join(words))
+
+
+def _can_break(words: Sequence[str], i: int, pattern: re.Pattern) -> bool:
+    """words[i-1] 뒤에서 끊어도 되는지 (끊을 만한 어절 끝이고, 다음 어절이 보조동사가 아님)."""
+    after = words[i] if i < len(words) else ""
+    return bool(pattern.search(words[i - 1])) and not AUXILIARY.match(after)
+
+
+def _best_cut(words: Sequence[str], target: int, next_word: str = "") -> int:
+    """줄이 넘칠 때 끊을 위치: 연결어미 뒤 → 조사 뒤 → (없으면) 넘치기 직전 어절 뒤."""
+    padded = [*words, next_word]
+    for pattern in (NATURAL_BREAK, PHRASE_END):
+        for i in range(len(words), 0, -1):
+            if _can_break(padded, i, pattern) and _joined_len(words[:i]) >= target * 0.5:
+                return i
+    return len(words)
+
+
 def _balanced_wrap(sentence: str, width: int) -> list[str]:
-    """줄 길이가 고르게 되도록 끊는다 (마지막 줄에 한두 단어만 남는 것 방지)."""
+    """긴 문장을 고른 길이의 짧은 줄로 나눈다.
+
+    '바닥 / 타일', '할 수 / 있습니다.' 처럼 어색하게 끊기지 않도록 쉼표·연결어미('~하고, ~하며, ~해서')
+    뒤를 우선 끊고, 마지막 줄에 한두 어절만 남으면 앞줄에 붙인다.
+    """
     if len(sentence) <= width + MOBILE_SLACK:
         return [sentence]
     parts = -(-len(sentence) // width)  # 올림
     target = -(-len(sentence) // parts) + 2
-    return textwrap.wrap(sentence, width=target, break_long_words=False, break_on_hyphens=False)
+    words = sentence.split()
+    lines: list[list[str]] = []
+    current: list[str] = []
+    for index, word in enumerate(words):
+        if current and _joined_len([*current, word]) > target:
+            cut = _best_cut(current, target, word)
+            lines.append(current[:cut])
+            current = current[cut:]
+        current = [*current, word]
+        rest = _joined_len(words[index + 1:])
+        if (_can_break(words, index + 1, NATURAL_BREAK) and _joined_len(current) >= target * 0.6
+                and rest >= MIN_LAST_LINE):
+            lines.append(current)
+            current = []
+    if current:
+        lines.append(current)
+    if len(lines) > 1 and _joined_len(lines[-1]) < MIN_LAST_LINE:
+        last = lines.pop()
+        lines[-1] = [*lines[-1], *last]
+    return [" ".join(line) for line in lines]
 
 
 def split_sentences(text: str) -> list[str]:
@@ -277,23 +326,23 @@ def build_prompt(
 [글 구성]
 1. title: 검색 키워드가 들어간 제목. 예) "{title_example}" (50자 이내)
 2. intro: "안녕하세요! {specialty} 전문 {company}입니다." 로 시작해, 오늘 현장이 어떤 곳이고
-   어떤 상태였는지, 이런 오염을 방치하면 어떤 문제가 생기는지까지 4~6줄로 소개합니다.
+   어떤 상태였는지, 이런 오염을 방치하면 어떤 문제가 생기는지까지 5~7문장으로 소개합니다.
 3. sections: 단계마다
    - heading: 인용구로 들어갈 짧은 소제목. 궁금증을 주는 문장 (예: "작업 전, 이 정도였어요")
-   - body: 이 단계를 여는 2~3줄 (이 단계에서 무엇을 왜 하는지)
-   - photo_captions: 그 단계 사진 수와 정확히 같은 개수. 사진마다 그 사진에 실제로 보이는 것을 2~4줄로 설명합니다.
+   - body: 이 단계를 여는 3~4문장 (이 단계에서 무엇을 왜, 어떤 순서로 하는지)
+   - photo_captions: 그 단계 사진 수와 정확히 같은 개수. 사진마다 그 사진에 실제로 보이는 것을 3~4문장으로 설명합니다.
      (오염 상태, 작업 방법·장비, 그 공정을 하는 이유, 달라진 점). 설명끼리 표현이 겹치지 않게 씁니다.
      '첫 번째 사진은', '사진 1', '촬영한 사진으로' 같은 사진 번호·촬영 언급 없이 장면 자체를 바로 설명합니다.
-4. tips: '{category} 관리 TIP' 문단 4~6줄. 이런 현장을 오래 깨끗하게 유지하는 일반적인 관리 요령과
+4. tips: '{category} 관리 TIP' 문단 5~6문장. 이런 현장을 오래 깨끗하게 유지하는 일반적인 관리 요령과
    전문 청소 권장 주기를 알려줍니다. (이 현장에 대한 새로운 사실을 지어내지 말고 일반 상식 수준으로)
 5. outro: 전후 차이를 한 줄로 정리 → "이상 {category} 현장이었습니다" 식의 맺음 →
    "현장 사진을 보내주시면 상담·견적 도와드립니다" 안내 → 전화 {phone}
 
 [문체]
 - 업체 1인칭의 친근하고 믿음직한 말투 (~입니다 / ~했어요 혼용). 느낌표·이모티콘(:) 등)은 글 전체에 3~5개만.
-- 모바일에서 읽기 좋게 한 줄을 25자 안팎에서 줄바꿈합니다 (줄바꿈은 \\n).
+- 한 문장은 짧고 명확하게(40자 안팎) 쓰고, 문장이 끝날 때마다 줄을 바꿉니다 (줄바꿈은 \\n).
 - 고객 후기처럼 쓰지 않고, 고객의 말이나 평가를 지어내지 않습니다.
-- 분량: 본문 전체(공백 제외 모든 텍스트 합) 1,400~2,600자. 짧게 끝내지 말고 공정의 이유와 차이를 충분히 설명합니다.
+- 분량: 본문 전체(공백 제외 모든 텍스트 합) 1,300~1,800자. 짧게 끝내지 말고 공정의 이유와 차이를 충분히 설명합니다.
 
 [사실 규칙]
 - 사진에서 확인되는 것만 씁니다. 가격·시간·약품명·면적 등은 사진에 명확히 보이지 않으면 쓰지 않습니다.

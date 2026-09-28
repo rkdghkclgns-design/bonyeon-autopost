@@ -100,6 +100,20 @@ def test_standalone_lines_and_blank_lines_are_boundaries():
     assert split_sentences("") == []
 
 
+def test_long_sentence_breaks_after_connective_endings_not_inside_phrases():
+    wrapped = wrap_mobile("이번에 방문한 공간은 통행량이 많아 바닥 타일 표면에 먼지와 찌든 때가 단단하게 내려앉아 있던 현장입니다.")
+    assert wrapped.split("\n") == [
+        "이번에 방문한 공간은 통행량이 많아", "바닥 타일 표면에 먼지와 찌든 때가", "단단하게 내려앉아 있던 현장입니다.",
+    ]
+    lines = wrap_mobile("진열대 사이 통로를 따라 바닥 자동 세정기를 운행하며 묵은 때를 강력하게 세척하는 과정입니다.").split("\n")
+    assert "바닥 자동 세정기를 운행하며" in lines  # 명사 사이('자동 / 세정기')를 끊지 않음
+
+
+def test_short_last_word_is_attached_to_previous_line():
+    lines = wrap_mobile("손으로 만져도 끈적임이나 분진 없이 보송보송하게 정리된 모습을 확인할 수 있습니다.").split("\n")
+    assert all(len(line) >= 8 for line in lines)  # '있습니다.' 만 따로 남지 않음
+
+
 def test_balanced_wrap_of_long_sentence():
     lengths = [len(line) for line in wrap_mobile(("가나다라 " * 14).strip()).split("\n")]
     assert max(lengths) - min(lengths) <= 6  # 고르게 나뉨
@@ -146,7 +160,7 @@ def test_prompt_coverage_area_never_claims_site_location():
     assert "| 안산 단원구 로프청소 본연클린" in prompt
     assert "현장이 고잔동에 있었다고 쓰지 마세요" in prompt
     assert "고잔동 등 안산 단원구 전 지역 출장·상담 가능" in prompt
-    assert "1,400~2,600자" in prompt and '"tips"' in prompt
+    assert "1,300~1,800자" in prompt and '"tips"' in prompt
 
 
 def test_prompt_site_area_uses_actual_location():
@@ -175,10 +189,10 @@ def test_tips_and_text_length():
 
 
 def test_min_body_chars_scales_with_photos():
-    assert min_body_chars({"작업전": 3, "작업후": 5}) == 400 + 60 * 8
+    assert min_body_chars({"작업전": 3, "작업후": 5}) == 600 + 100 * 8
 
 
-def _long_json(stage="작업후", times=40):
+def _long_json(stage="작업후", times=80):
     return ai_json(stages=(stage,), tips="깨끗하게 관리하는 방법입니다. " * times)
 
 
