@@ -68,12 +68,17 @@ def is_persistent_login(cookies) -> bool:
 
 
 def wait_for_login(context, page, timeout_s: float, poll_ms: int = 2000) -> bool:
-    """사용자가 창에서 로그인을 마칠 때까지(로그인 쿠키가 생길 때까지) 기다린다."""
-    for _ in range(max(1, int(timeout_s * 1000 / poll_ms))):
-        if has_login_cookies(context.cookies()):
-            page.wait_for_timeout(3000)  # 로그인 직후 이동이 끝나도록 잠시 대기
-            return True
-        page.wait_for_timeout(poll_ms)
+    """사용자가 창에서 로그인을 마칠 때까지(로그인 쿠키가 생길 때까지) 기다린다. 창을 닫으면 False."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    try:
+        for _ in range(max(1, int(timeout_s * 1000 / poll_ms))):
+            if has_login_cookies(context.cookies()):
+                page.wait_for_timeout(3000)  # 로그인 직후 이동이 끝나도록 잠시 대기
+                return True
+            page.wait_for_timeout(poll_ms)
+    except PlaywrightError:  # 로그인 전에 창을 닫음
+        return False
     return False
 
 
