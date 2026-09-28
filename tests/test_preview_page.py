@@ -35,3 +35,17 @@ def test_write_preview_creates_file_and_skips_missing_assets(tmp_path):
                         header=tmp_path / "없는파일.png")
     text = out.read_text(encoding="utf-8")
     assert text.startswith("<!doctype html>") and text.count("data:image/jpeg") == 1
+
+
+def test_naver_preview_follows_editor_blocks_line_by_line(tmp_path):
+    from autopost.preview_page import render_naver_preview
+
+    content = parse_content(ai_json(), "로프청소", "본연")
+    photos = {"작업전": [make_jpeg(tmp_path / "b.jpg")], "작업후": [make_jpeg(tmp_path / "a.jpg")]}
+    header, footer = make_jpeg(tmp_path / "h.jpg"), make_jpeg(tmp_path / "f.jpg")
+    page = render_naver_preview(content, photos, header=header, footer=footer, blog="blog.naver.com/evbank")
+    assert page.count("data:image/jpeg") == 4  # 헤더 + 사진 2 + 푸터
+    assert page.index("data:image") < page.index("안녕하세요")  # 헤더가 맨 위
+    assert "<p>“ 작업전 모습 ”</p>" in page  # 소제목은 인용 문장으로 입력됨
+    assert "<p>&nbsp;</p>" in page  # 빈 줄 = 빈 문단
+    assert "<span>#로프청소</span>" in page and "blog.naver.com/evbank" in page

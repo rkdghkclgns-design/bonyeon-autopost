@@ -74,3 +74,62 @@ def write_preview(out_path: Path, *args, **kwargs) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render_preview(*args, **kwargs), encoding="utf-8")
     return out_path
+
+
+NAVER_PAGE = """<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[네이버] {title}</title>
+<style>
+  body {{ margin:0; background:#f5f6f7; font-family:'Nanum Gothic','나눔고딕','Malgun Gothic',sans-serif; color:#333; }}
+  .top {{ background:#03c75a; color:#fff; padding:12px 16px; font-weight:bold; }}
+  main {{ max-width:693px; margin:0 auto; background:#fff; padding:28px 20px 48px; }}
+  .note {{ background:#fff8e1; border:1px solid #f0d58a; border-radius:8px; padding:10px 14px; font-size:.9em; margin-bottom:20px; }}
+  h1 {{ font-size:1.6em; line-height:1.4; margin:4px 0 8px; font-weight:normal; }}
+  .meta {{ color:#999; font-size:.85em; border-bottom:1px solid #eee; padding-bottom:16px; margin-bottom:28px; }}
+  p {{ margin:0; font-size:16px; line-height:1.8; min-height:1.8em; }}
+  img {{ display:block; max-width:100%; margin:12px 0; }}
+  .tags {{ margin-top:36px; border-top:1px solid #eee; padding-top:16px; }}
+  .tags span {{ display:inline-block; color:#03c75a; margin:0 10px 8px 0; font-size:.95em; }}
+</style></head>
+<body><div class="top">네이버 블로그 미리보기</div><main>
+<div class="note">{note}</div>
+<h1>{title}</h1>
+<div class="meta">{blog} · 에디터에 입력되는 순서·줄바꿈 그대로</div>
+{body}
+<div class="tags">{tags}</div>
+</main></body></html>
+"""
+
+
+def render_naver_preview(
+    content: PostContent,
+    photos_by_stage: Mapping[str, Sequence[Path]],
+    header: Path | None = None,
+    footer: Path | None = None,
+    comparison: Path | None = None,
+    reviews: Sequence[Path] = (),
+    note: str = "미리보기 — 아직 어디에도 게시되지 않았습니다.",
+    blog: str = "네이버 블로그",
+) -> str:
+    """네이버 스마트에디터에 들어가는 블록(글 한 줄 = 한 문단, 빈 줄 = 빈 문단) 순서 그대로 보여준다."""
+    from .naver_publisher import build_blocks  # 네이버 모듈은 필요할 때만
+
+    parts: list[str] = []
+    for block in build_blocks(content, photos_by_stage, header, footer, comparison, reviews):
+        if block.kind == "image" and block.image is not None:
+            if block.image.is_file():
+                parts.append(f'<img src="{data_uri(block.image)}" alt="">')
+            continue
+        for line in block.text.split("\n"):  # 발행 시 줄마다 Enter — 빈 줄은 빈 문단
+            parts.append(f"<p>{html.escape(line.strip())}</p>" if line.strip() else "<p>&nbsp;</p>")
+        parts.append("<p>&nbsp;</p>")
+    tags = "".join(f"<span>{html.escape(tag)}</span>" for tag in content.hashtags)
+    return NAVER_PAGE.format(title=html.escape(content.title), note=html.escape(note), blog=html.escape(blog),
+                             body="\n".join(parts), tags=tags)
+
+
+def write_naver_preview(out_path: Path, *args, **kwargs) -> Path:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(render_naver_preview(*args, **kwargs), encoding="utf-8")
+    return out_path

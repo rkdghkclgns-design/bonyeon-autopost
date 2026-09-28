@@ -14,7 +14,7 @@ from .ai_helper import ContentGenerator, PostContent
 from .blog_publisher import BloggerPublisher, build_blog_html, build_labels
 from .config import Config, platform_readiness
 from .before_after import make_comparison, make_contact_sheet, make_vertical_comparison
-from .preview_page import write_preview
+from .preview_page import write_naver_preview, write_preview
 from .progress import ProgressReporter
 from .step_summary import build_failure_summary, build_step_summary, write_step_summary
 from .constants import (
@@ -201,18 +201,21 @@ def _publish_blogger(
     return services.blogger.publish(content.title, html_body, build_labels(category, content.hashtags))
 
 
-def _write_blog_preview(
+def _write_blog_previews(
     content: PostContent, media: PostMedia, assets: CommonAssets, workdir: Path, dry_run: bool
-) -> Path | None:
-    """검토용: 블로그에 올라갈 모습 그대로의 페이지 (실패해도 포스팅은 계속)."""
+) -> tuple[Path | None, Path | None]:
+    """검토용: 구글 블로그·네이버 블로그에 올라갈 모습 그대로의 페이지 (실패해도 포스팅은 계속)."""
     note = ("검토용 미리보기 — 아직 어디에도 게시되지 않았습니다." if dry_run
             else "발행된 글의 미리보기 사본입니다.")
-    try:
-        return write_preview(workdir / "blog_preview.html", content, media.photos, assets.header_path,
-                             assets.footer_path, media.comparison, media.reviews, note=note)
-    except Exception:
-        log.exception("블로그 미리보기 생성 실패")
-        return None
+    args = (content, media.photos, assets.header_path, assets.footer_path, media.comparison, media.reviews)
+    previews: list[Path | None] = []
+    for writer, name in ((write_preview, "blog_preview_google.html"), (write_naver_preview, "blog_preview_naver.html")):
+        try:
+            previews.append(writer(workdir / name, *args, note=note))
+        except Exception:
+            log.exception("블로그 미리보기 생성 실패: %s", name)
+            previews.append(None)
+    return previews[0], previews[1]
 
 
 def _safely(platform: str, action: Callable[[], PublishResult]) -> PublishResult:
@@ -482,8 +485,11 @@ def _run_steps(
     reporter.step("draft", "done", f"본문 {content.text_length():,}자")
     reporter.file(post_txt, "원고", f"📝 *{content.title}*\n해시태그: {' '.join(content.hashtags[:6])} …",
                   stage="draft")
-    reporter.file(_write_blog_preview(content, media, assets, workdir, options.dry_run), "블로그 미리보기",
-                  "👀 블로그에 올라갈 모습 — 파일을 내려받아 브라우저로 열어 확인하세요", stage="draft")
+    google_preview, naver_preview = _write_blog_previews(content, media, assets, workdir, options.dry_run)
+    reporter.file(google_preview, "구글 블로그 미리보기",
+                  "👀 구글 블로그에 올라갈 모습 — 파일을 내려받아 브라우저로 열어 확인하세요", stage="draft")
+    reporter.file(naver_preview, "네이버 블로그 미리보기",
+                  "👀 네이버 블로그에 올라갈 모습 (에디터 입력 순서·줄바꿈 그대로)", stage="draft")
 
     reporter.step("video", "run")  # 틱톡 영상
     video_path, video_error = _make_video(services, cfg, media, assets, workdir)

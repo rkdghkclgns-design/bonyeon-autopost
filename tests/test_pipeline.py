@@ -168,8 +168,8 @@ def test_full_success_publishes_everywhere_and_archives(world):
     assert all(line.startswith("✅") for line in checklist.splitlines()) and len(checklist.splitlines()) == 6
     assert "5장 (작업 전 2 · 작업 중 1 · 작업 후 2)" in checklist
     # 결과물은 모두 진행 메시지의 스레드로
-    assert _upload_titles(client, ts) == ["선택된 사진", "전후 비교", "원고", "블로그 미리보기", "틱톡 영상"]
-    assert len(client.uploads) == 5
+    assert _upload_titles(client, ts) == ["선택된 사진", "전후 비교", "원고", "구글 블로그 미리보기", "네이버 블로그 미리보기", "틱톡 영상"]
+    assert len(client.uploads) == 6
     assert not any("수동 발행용" in t for t in client.texts())
     assert "✅ *틱톡*" in _report(client, ts)
     assert [m for m in client.messages if m.get("thread_ts") is None] == [client.messages[0]]  # 채널엔 1개만
@@ -338,7 +338,7 @@ def test_dry_run_publishes_nothing_but_sends_preview(world):
     ts = _progress_ts(client)
     assert client.messages[0]["text"] == "🧹 로프청소 포스팅 진행 중 [테스트]"
     assert client.last_text(ts) == "🧪 로프청소 테스트 완료"
-    assert _upload_titles(client, ts) == ["선택된 사진", "전후 비교", "원고", "블로그 미리보기", "틱톡 영상"]
+    assert _upload_titles(client, ts) == ["선택된 사진", "전후 비교", "원고", "구글 블로그 미리보기", "네이버 블로그 미리보기", "틱톡 영상"]
     checklist = _checklist(client, ts)
     assert "⏭️ 블로그·틱톡 발행 — 테스트 실행" in checklist
     assert "⏭️ 사용 사진 보관 — 테스트 실행" in checklist
