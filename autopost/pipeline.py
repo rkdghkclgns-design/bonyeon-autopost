@@ -397,7 +397,7 @@ def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
         slack, f"🧹 {selection.category} 포스팅 진행 중{tag}",
         _meta_lines(selection.category, area, options, now), options.run_url,
         stage_channels=dict(cfg.slack_stage_channels),
-        run_label=f"{selection.category} · {now:%m/%d %H:%M}{tag}",
+        run_label=f"{selection.category} · {now:%m/%d %H:%M}" + (" · 테스트" if options.dry_run else ""),
     )
     reporter.start()
     reporter.step("select", "done", f"{selection.total}장 ({_stage_counts(selection)})")

@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from autopost.envfile import update_env_file  # noqa: E402
 from autopost.local_secrets import save_everywhere  # noqa: E402
-from autopost.setup_browser import launch_visible_browser  # noqa: E402
+from autopost.setup_browser import launch_visible_browser, tk_prompt  # noqa: E402
 
 AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
@@ -69,19 +69,6 @@ def is_redirect(url: str, redirect_uri: str) -> bool:
         target.scheme, target.netloc, target.path.rstrip("/"))
     query = parse_qs(parsed.query)
     return same_place and ("code" in query or "error" in query)
-
-
-def tk_prompt(title: str, message: str, secret: bool) -> str:
-    """터미널 없이도 값을 붙여넣을 수 있는 작은 입력 창."""
-    import tkinter as tk
-    from tkinter import simpledialog
-
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    value = simpledialog.askstring(title, message, parent=root, **({"show": "*"} if secret else {}))
-    root.destroy()
-    return (value or "").strip()
 
 
 def resolve_credentials(existing: Mapping[str, str], prompt: Prompt = tk_prompt) -> tuple[str, str]:

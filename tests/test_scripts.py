@@ -184,3 +184,23 @@ def test_exchange_code_posts_form():
 
     assert tiktok.exchange_code("k", "s", "c", "https://r/", post=post) == {"refresh_token": "r"}
     assert sent["data"]["grant_type"] == "authorization_code" and sent["data"]["client_secret"] == "s"
+
+
+set_secret = _load("set_secret")
+
+
+def test_set_secret_asks_with_masked_prompt_and_hint():
+    asked = []
+
+    def prompt(title, message, secret):
+        asked.append((title, message, secret))
+        return "  new-value  "
+
+    assert set_secret.ask_value("GEMINI_API_KEY", prompt) == "new-value"
+    title, message, secret = asked[0]
+    assert title == "GEMINI_API_KEY 설정" and secret is True and "aistudio.google.com" in message
+
+
+@pytest.mark.parametrize("name,ok", [("GEMINI_API_KEY", True), ("gemini", False), ("A;rm -rf", False), ("AB", False)])
+def test_set_secret_name_validation(name, ok):
+    assert bool(set_secret.NAME_RE.match(name)) is ok
