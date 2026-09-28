@@ -26,7 +26,6 @@ from .constants import (
     PUBLIC_ASSET_FOLDER,
     REVIEW_FOLDER,
     STAGES,
-    USED_FOLDER,
 )
 from .drive_helper import DriveHelper
 
@@ -42,7 +41,6 @@ class DriveLayout:
     footer_folder_id: str
     bgm_folder_id: str
     public_folder_id: str
-    used_folder_id: str
     # 카테고리명 -> (단계명 -> 폴더 ID)
     stage_folders: Mapping[str, Mapping[str, str]]
     review_folder_id: str = ""
@@ -114,7 +112,6 @@ def ensure_layout(
 
     review_id = sub(REVIEW_FOLDER)
     public_id = sub(PUBLIC_ASSET_FOLDER)
-    used_id = sub(USED_FOLDER)
 
     if create_templates:
         with tempfile.TemporaryDirectory(prefix="autopost_setup_") as tmp:
@@ -142,7 +139,6 @@ def ensure_layout(
         footer_folder_id=footer_id,
         bgm_folder_id=bgm_id,
         public_folder_id=public_id,
-        used_folder_id=used_id,
         stage_folders=MappingProxyType(stage_folders),
         review_folder_id=review_id,
     )

@@ -1,9 +1,14 @@
-"""포스팅할 카테고리와 사진 선택."""
+"""포스팅할 카테고리와 사진 선택.
+
+사진은 옮기지 않고 드라이브에 '사용 횟수'만 기록한다. 한 번도 안 쓴 사진이 먼저(올린 순서대로 —
+같은 현장 사진끼리 함께), 다 쓴 뒤에는 덜 쓴 사진부터 무작위로 섞어 매번 다른 조합이 되게 한다.
+"""
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from .constants import CATEGORIES, STAGES
 from .drive_helper import DriveFile, DriveHelper
@@ -25,6 +30,23 @@ class PhotoSelection:
 
     def all_files(self) -> tuple[DriveFile, ...]:
         return tuple(f for stage in STAGES for f in self.files_by_stage.get(stage, ()))
+
+    @property
+    def reused(self) -> bool:
+        """이전 포스팅에 쓴 사진이 섞였는지 — 섞였으면 새 현장 글처럼 쓰지 않는다."""
+        return any(f.post_count > 0 for f in self.all_files())
+
+    @property
+    def fresh_count(self) -> int:
+        return sum(1 for f in self.all_files() if f.post_count == 0)
+
+
+def usage_order(files: Sequence[DriveFile], rng: random.Random) -> list[DriveFile]:
+    """안 쓴 사진(올린 순서) → 덜 쓴 사진(같은 횟수끼리는 무작위) 순."""
+    return sorted(
+        files,
+        key=lambda f: (f.post_count, f.created_time if f.post_count == 0 else "", rng.random()),
+    )
 
 
 def resolve_category(requested: str) -> str | None:
@@ -58,14 +80,34 @@ def split_request(text: str) -> tuple[str, str]:
     return "", " ".join(tokens)
 
 
-def collect_category(
-    drive: DriveHelper, layout: DriveLayout, category: str, per_stage: int
-) -> PhotoSelection:
+@dataclass(frozen=True)
+class _Pool:
+    """카테고리의 전체 사진 (단계별, 사용 순서로 정렬)."""
+    category: str
+    files_by_stage: Mapping[str, tuple[DriveFile, ...]]
+
+    def _all(self) -> tuple[DriveFile, ...]:
+        return tuple(f for files in self.files_by_stage.values() for f in files)
+
+    @property
+    def fresh(self) -> int:
+        return sum(1 for f in self._all() if f.post_count == 0)
+
+    @property
+    def last_posted(self) -> str:
+        return max((f.last_posted for f in self._all()), default="")
+
+    def pick(self, per_stage: int) -> PhotoSelection:
+        return PhotoSelection(self.category, MappingProxyType(
+            {stage: files[:per_stage] for stage, files in self.files_by_stage.items()}
+        ))
+
+
+def _pool(drive: DriveHelper, layout: DriveLayout, category: str, rng: random.Random) -> _Pool:
     folders = layout.stage_folders[category]
-    files_by_stage = {
-        stage: tuple(drive.list_images(folders[stage])[:per_stage]) for stage in STAGES
-    }
-    return PhotoSelection(category, MappingProxyType(files_by_stage))
+    return _Pool(category, MappingProxyType({
+        stage: tuple(usage_order(drive.list_images(folders[stage]), rng)) for stage in STAGES
+    }))
 
 
 def select_photos(
@@ -74,10 +116,17 @@ def select_photos(
     requested: str,
     per_stage: int,
     min_photos: int,
+    rng: random.Random | None = None,
 ) -> PhotoSelection | None:
-    """요청 카테고리(없으면 사진이 가장 많은 카테고리)에서 단계별 오래된 사진부터 선택."""
+    """요청 카테고리(없으면 새 사진이 가장 많은 카테고리 → 없으면 가장 오래전에 올린 카테고리)에서
+    단계별로 사용 순서가 앞선 사진을 고른다."""
+    rng = rng or random.Random()
     wanted = resolve_category(requested)
     candidates = [wanted] if wanted else [c.name for c in CATEGORIES]
-    selections = [collect_category(drive, layout, name, per_stage) for name in candidates]
-    best = max(selections, key=lambda s: s.total)  # 동점이면 먼저 나온 카테고리
-    return best if best.total >= min_photos else None
+    picks = [(pool, pool.pick(per_stage)) for pool in (_pool(drive, layout, n, rng) for n in candidates)]
+    eligible = [(pool, pick) for pool, pick in picks if pick.total >= min_photos]
+    if not eligible:
+        return None
+    # 새 사진이 많은 카테고리 우선, 동률(모두 0장 포함)이면 가장 오래전에 포스팅한 카테고리 → 카테고리가 돌아가며 올라감
+    _, best = min(eligible, key=lambda item: (-item[0].fresh, item[0].last_posted))
+    return best

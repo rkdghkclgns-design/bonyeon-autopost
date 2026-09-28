@@ -84,7 +84,7 @@ def test_fail_current_after_all_steps_uses_last_step():
     for key, _ in STEPS:
         reporter.step(key, "done")
     reporter.fail_current("late")
-    assert _lines(client.last_blocks(reporter.thread_ts))[-1] == "❌ 사용 사진 보관 — late"
+    assert _lines(client.last_blocks(reporter.thread_ts))[-1] == "❌ 사진 사용 기록 — late"
 
 
 def test_webhook_only_reporter_posts_finished_steps_only():

@@ -282,3 +282,16 @@ def test_generator_gives_up_after_max_attempts(tmp_path):
     generator = ContentGenerator("key", "m", "본연", "010", client=client, sleep=lambda _: None, max_attempts=3)
     with pytest.raises(ContentGenerationError, match="3회"):
         generator.generate("로프청소", {"작업후": [image]})
+
+
+def test_reused_photos_prompt_is_work_case_not_new_site():
+    fresh = build_prompt("본연클린", "010", "정기청소", {"작업후": 2}, area=SITE)
+    reused = build_prompt("본연클린", "010", "정기청소", {"작업후": 2}, area=COVERAGE, reused=True)
+
+    assert "'현장 기록' 글" in fresh and "새 현장 방문기가 아닙니다" not in fresh
+    assert "'정기청소 작업 사례' 글" in reused
+    assert "새 현장 방문기가 아닙니다" in reused and "같은 장소라고 단정하지 않습니다" in reused
+    assert "○○ 청소, 이렇게 진행합니다 | 안산 단원구 정기청소 본연클린" in reused
+    assert "이상 본연클린의 정기청소 작업 사례였습니다" in reused
+    assert "이상 정기청소 현장이었습니다" not in reused
+    assert "수도권 전 지역 출장·상담 가능" in reused

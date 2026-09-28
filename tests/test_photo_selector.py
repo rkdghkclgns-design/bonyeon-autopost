@@ -1,3 +1,5 @@
+import random
+
 import pytest
 
 from autopost import setup_engine
@@ -64,3 +66,56 @@ def test_requested_category_below_minimum_returns_none(drive_and_layout):
 def test_no_photos_returns_none(drive_and_layout):
     drive, layout = drive_and_layout
     assert select_photos(drive, layout, "", per_stage=3, min_photos=1) is None
+
+
+def _use(drive, ids, count, when="2026-09-29T07:00:00+09:00"):
+    for file_id in ids:
+        drive.record_post(file_id, count, when)
+
+
+def test_fresh_photos_first_in_upload_order_then_least_used(drive_and_layout):
+    drive, layout = drive_and_layout
+    before = _add(drive, layout, "정기청소", "작업전", 6)
+    _use(drive, before[:3], 1)  # 앞 3장은 이미 한 번 씀
+
+    selection = select_photos(drive, layout, "정기청소", per_stage=3, min_photos=3, rng=random.Random(1))
+
+    assert [f.id for f in selection.files_by_stage["작업전"]] == before[3:]  # 안 쓴 사진이 올린 순서대로
+    assert not selection.reused and selection.fresh_count == 3
+
+
+def test_all_used_photos_are_recombined_randomly(drive_and_layout):
+    drive, layout = drive_and_layout
+    before = _add(drive, layout, "정기청소", "작업전", 9)
+    _use(drive, before, 1)
+
+    combos = {
+        tuple(f.id for f in select_photos(drive, layout, "정기청소", 3, 3, rng=random.Random(seed))
+              .files_by_stage["작업전"])
+        for seed in range(8)
+    }
+    assert len(combos) > 1  # 매번 다른 조합
+    selection = select_photos(drive, layout, "정기청소", 3, 3, rng=random.Random(0))
+    assert selection.reused and selection.fresh_count == 0
+
+
+def test_less_used_photos_win_over_more_used(drive_and_layout):
+    drive, layout = drive_and_layout
+    before = _add(drive, layout, "정기청소", "작업전", 4)
+    _use(drive, before[:2], 3)
+    _use(drive, before[2:], 1)
+    picked = select_photos(drive, layout, "정기청소", 2, 2, rng=random.Random(5)).files_by_stage["작업전"]
+    assert {f.id for f in picked} == set(before[2:])
+
+
+def test_category_with_new_photos_wins_else_least_recently_posted(drive_and_layout):
+    drive, layout = drive_and_layout
+    regular = _add(drive, layout, "정기청소", "작업후", 5)
+    rope = _add(drive, layout, "로프청소", "작업후", 3)
+    _use(drive, regular, 1, "2026-09-29T07:00:00+09:00")
+
+    assert select_photos(drive, layout, "", 3, 3).category == "로프청소"  # 새 사진이 있는 카테고리 먼저
+
+    _use(drive, rope, 1, "2026-09-29T17:00:00+09:00")
+    # 둘 다 새 사진이 없으면 가장 오래전에 포스팅한 카테고리 → 번갈아 올라감
+    assert select_photos(drive, layout, "", 3, 3).category == "정기청소"

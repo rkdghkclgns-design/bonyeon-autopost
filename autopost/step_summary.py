@@ -38,8 +38,8 @@ def build_step_summary(
         status = "⏭️ 건너뜀" if r.skipped else ("✅ 성공" if r.ok else "❌ 실패")
         link = f"[열기]({r.url})" if r.url else ""
         lines.append(f"| {r.platform} | {status} | {link} | {_cell(r.message)[:120]} |")
-    if getattr(outcome, "url", ""):
-        lines += ["", f"사용한 사진 {outcome.moved}장 → [보관 폴더]({outcome.url})"]
+    if getattr(outcome, "recorded", 0):
+        lines += ["", f"사용한 사진 {outcome.recorded}장 — 폴더에 그대로 두고 사용 횟수만 기록"]
     lines += ["", "영상·원고·사진은 슬랙 진행 스레드에서 확인할 수 있습니다."]
     return "\n".join(lines) + "\n"
 

@@ -60,10 +60,9 @@ def build_report_blocks(
     category: str,
     title: str,
     results: Sequence[PublishResult],
-    archive_url: str = "",
-    moved_count: int = 0,
+    used_count: int = 0,
     dry_run: bool = False,
-    move_failures: Sequence[str] = (),
+    record_failures: Sequence[str] = (),
 ) -> list[dict]:
     header = "🧪 [청소 자동화] 테스트 실행 결과" if dry_run else "🧹 [청소 자동화] 포스팅 완료 리포트"
     blocks: list[dict] = [
@@ -82,17 +81,16 @@ def build_report_blocks(
             line += f"\n{result.message}"
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": _truncate(line)}})
 
-    if move_failures:
-        names = escape_mrkdwn(", ".join(move_failures))
+    if record_failures:
+        names = escape_mrkdwn(", ".join(record_failures))
         warning = (
-            f"⚠️ *사진 {len(move_failures)}장 이동 실패* — 드라이브에서 99_사용완료_사진 으로 직접 옮겨주세요. "
-            f"그대로 두면 다음 포스팅에 다시 사용됩니다.\n{names}"
+            f"⚠️ *사진 {len(record_failures)}장 사용 기록 실패* — 다음 글에서 새 사진으로 취급되어 "
+            f"먼저 다시 쓰일 수 있습니다. (사진 자체는 문제없음)\n{names}"
         )
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": _truncate(warning)}})
 
-    footer = f"사용한 사진 {moved_count}장 → 99_사용완료_사진 이동" if moved_count else "사진 이동 없음"
-    if archive_url:
-        footer += f"  |  <{archive_url}|보관 폴더>"
+    footer = (f"사용한 사진 {used_count}장 — 폴더에 그대로 두고 사용 횟수만 기록 (다음 글에서 다른 조합으로 재사용)"
+              if used_count else "사진 사용 기록 없음")
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": footer}]})
     return blocks
 

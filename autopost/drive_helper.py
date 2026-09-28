@@ -1,4 +1,4 @@
-"""Google Drive API v3 래퍼 — 폴더 탐색/생성, 업로드/다운로드, 이동, 공개 링크."""
+"""Google Drive API v3 래퍼 — 폴더 탐색/생성, 업로드/다운로드, 이동, 공개 링크, 사진 사용 기록."""
 from __future__ import annotations
 
 import io
@@ -14,7 +14,10 @@ from .constants import FOLDER_MIME
 log = logging.getLogger(__name__)
 
 NUM_RETRIES = 3
-FILE_FIELDS = "id, name, mimeType, createdTime"
+FILE_FIELDS = "id, name, mimeType, createdTime, appProperties"
+# 사진을 옮기지 않고 파일에 사용 기록을 남긴다 (이 앱만 읽고 쓰는 비공개 속성)
+POST_COUNT_KEY = "autopostCount"
+LAST_POSTED_KEY = "autopostLast"
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,8 @@ class DriveFile:
     name: str
     mime_type: str
     created_time: str = ""
+    post_count: int = 0  # 포스팅에 쓰인 횟수
+    last_posted: str = ""  # 마지막으로 쓰인 시각 (ISO)
 
     @property
     def is_folder(self) -> bool:
@@ -50,12 +55,22 @@ def build_query(
     return " and ".join(clauses)
 
 
+def _count(value: object) -> int:
+    try:
+        return max(0, int(str(value)))
+    except ValueError:
+        return 0
+
+
 def _to_file(raw: dict) -> DriveFile:
+    props = raw.get("appProperties") or {}
     return DriveFile(
         id=raw["id"],
         name=raw.get("name", ""),
         mime_type=raw.get("mimeType", ""),
         created_time=raw.get("createdTime", ""),
+        post_count=_count(props.get(POST_COUNT_KEY, 0)),
+        last_posted=str(props.get(LAST_POSTED_KEY, "")),
     )
 
 
@@ -158,6 +173,11 @@ class DriveHelper:
             removeParents=previous,
             fields="id, parents",
         ).execute(num_retries=NUM_RETRIES)
+
+    def record_post(self, file_id: str, count: int, when: str) -> None:
+        """사진이 포스팅에 쓰였음을 파일 속성에 기록 (사진은 원래 폴더에 그대로)."""
+        body = {"appProperties": {POST_COUNT_KEY: str(count), LAST_POSTED_KEY: when}}
+        self._service.files().update(fileId=file_id, body=body, fields="id").execute(num_retries=NUM_RETRIES)
 
     def make_public(self, file_id: str) -> None:
         """'링크가 있는 모든 사용자 - 뷰어' 권한 부여 (이미 있으면 무해하게 재적용)."""

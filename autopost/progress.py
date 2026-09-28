@@ -26,7 +26,7 @@ STEPS: tuple[tuple[str, str], ...] = (
     ("draft", "AI 원고 작성"),
     ("video", "틱톡 영상 제작"),
     ("publish", "블로그·틱톡 발행"),
-    ("archive", "사용 사진 보관"),
+    ("usage", "사진 사용 기록"),
 )
 STEP_LABELS = dict(STEPS)
 ICONS = {"wait": "⬜", "run": "⏳", "done": "✅", "fail": "❌", "skip": "⏭️"}

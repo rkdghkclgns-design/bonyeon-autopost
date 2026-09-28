@@ -105,3 +105,23 @@ def test_make_public_creates_anyone_reader_permission():
 @pytest.mark.parametrize("mime,expected", [(FOLDER_MIME, True), ("image/jpeg", False)])
 def test_drive_file_is_folder(mime, expected):
     assert drive_helper.DriveFile("i", "n", mime).is_folder is expected
+
+
+def test_record_post_writes_app_properties_and_list_reads_them():
+    service = FakeDriveService()
+    file_id = service.add("a.jpg", "folder")
+    drive = DriveHelper(service)
+    assert drive.list_images("folder")[0].post_count == 0
+
+    drive.record_post(file_id, 2, "2026-09-29T07:00:00+09:00")
+
+    assert service.files_data[file_id]["parents"] == ["folder"]  # 옮기지 않음
+    listed = drive.list_images("folder")[0]
+    assert listed.post_count == 2 and listed.last_posted == "2026-09-29T07:00:00+09:00"
+
+
+def test_broken_post_count_is_treated_as_unused():
+    service = FakeDriveService()
+    file_id = service.add("a.jpg", "folder")
+    service.files_data[file_id]["appProperties"] = {drive_helper.POST_COUNT_KEY: "x"}
+    assert DriveHelper(service).list_images("folder")[0].post_count == 0

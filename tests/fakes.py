@@ -47,7 +47,8 @@ class MemoryDrive:
 
     def _file(self, file_id: str) -> DriveFile:
         item = self.items[file_id]
-        return DriveFile(file_id, item["name"], item["mime"], item.get("created", ""))
+        return DriveFile(file_id, item["name"], item["mime"], item.get("created", ""),
+                         item.get("post_count", 0), item.get("last_posted", ""))
 
     # 테스트 헬퍼
     def add_file(self, parent: str, name: str, content: bytes = b"", mime: str = "image/jpeg") -> str:
@@ -93,6 +94,9 @@ class MemoryDrive:
 
     def move(self, file_id: str, new_parent_id: str) -> None:
         self.items[file_id]["parent"] = new_parent_id
+
+    def record_post(self, file_id: str, count: int, when: str) -> None:
+        self.items[file_id].update(post_count=count, last_posted=when)
 
     def make_public(self, file_id: str) -> None:
         self.public.add(file_id)
@@ -184,11 +188,14 @@ class _FakeFiles:
     def get(self, fileId, fields=None):
         return _Req(lambda: {"parents": list(self.s.files_data[fileId]["parents"])})
 
-    def update(self, fileId, addParents=None, removeParents=None, fields=None):
+    def update(self, fileId, addParents=None, removeParents=None, fields=None, body=None):
         def run():
             row = self.s.files_data[fileId]
-            removed = set((removeParents or "").split(","))
-            row["parents"] = [p for p in row["parents"] if p not in removed] + [addParents]
+            if body and "appProperties" in body:
+                row.setdefault("appProperties", {}).update(body["appProperties"])
+            if addParents:
+                removed = set((removeParents or "").split(","))
+                row["parents"] = [p for p in row["parents"] if p not in removed] + [addParents]
             return {"id": fileId, "parents": row["parents"]}
 
         return _Req(run)

@@ -9,7 +9,6 @@ from autopost.constants import (
     GUIDE_FILE,
     HEADER_FILE,
     STAGES,
-    USED_FOLDER,
 )
 from fakes import MemoryDrive
 
@@ -30,8 +29,8 @@ def test_first_run_creates_full_structure(fast_templates):
     drive = MemoryDrive()
     report = setup_engine.ensure_layout(drive, ROOT, "본연", "010-1234-5678")
 
-    # 루트 1 + 공통 3 + 카테고리 3×(1+단계3) + 고객후기 1 + 게시이미지 1 + 사용완료 1
-    assert len(report.created_folders) == 1 + 3 + 3 * 4 + 1 + 1 + 1
+    # 루트 1 + 공통 3 + 카테고리 3×(1+단계3) + 고객후기 1 + 게시이미지 1 (사용완료 폴더는 더 이상 만들지 않음)
+    assert len(report.created_folders) == 1 + 3 + 3 * 4 + 1 + 1
     assert drive.path_of(report.layout.review_folder_id) == f"{ROOT}/04_고객후기"
     assert set(report.created_files) == {
         f"00_공통_헤더이미지/{HEADER_FILE}",
@@ -43,7 +42,7 @@ def test_first_run_creates_full_structure(fast_templates):
 
     layout = report.layout
     assert drive.path_of(layout.root_id) == ROOT
-    assert drive.path_of(layout.used_folder_id) == f"{ROOT}/{USED_FOLDER}"
+    assert drive.find_child(layout.root_id, "99_사용완료_사진") is None
     for category in CATEGORIES:
         for stage in STAGES:
             folder_id = layout.stage_folders[category.name][stage]

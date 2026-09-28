@@ -6,8 +6,9 @@ import pytest
 from autopost import setup_engine, templates
 from autopost.ai_helper import parse_content
 from autopost.config import load_config
-from autopost.constants import USED_FOLDER
-from autopost.pipeline import KST, AlreadyReported, RunOptions, Services, run_post, run_setup, safe_name
+from autopost.pipeline import (
+    KST, AlreadyReported, RunOptions, Services, area_turn, run_post, run_setup, safe_name,
+)
 from autopost.results import PublishResult
 from autopost.slack_helper import SlackNotifier
 from fakes import FakeWebClient, MemoryDrive, ai_json, jpeg_bytes
@@ -20,10 +21,12 @@ class FakeGenerator:
     def __init__(self):
         self.calls = []
         self.areas = []
+        self.reused = []
 
-    def generate(self, category, images_by_stage, area=None):
+    def generate(self, category, images_by_stage, area=None, reused=False):
         self.calls.append((category, {k: list(v) for k, v in images_by_stage.items()}))
         self.areas.append(area)
+        self.reused.append(reused)
         return parse_content(ai_json(), category, "본연", area=area)
 
 
@@ -122,12 +125,12 @@ def _upload_titles(client, ts):
     return [u["title"] for u in client.thread_uploads(ts)]
 
 
-def _archive_children(drive, layout):
-    archive = drive.find_child(layout.used_folder_id, "2026-09-28_1000_로프청소", folder_only=True)
-    return archive, ([c.name for c in drive.children(archive.id)] if archive else [])
+def _post_counts(drive, photos):
+    """사용 횟수 집합 — 사진은 옮기지 않고 횟수만 기록한다."""
+    return {drive.items[i].get("post_count", 0) for ids in photos.values() for i in ids}
 
 
-def test_full_success_publishes_everywhere_and_archives(world):
+def test_full_success_publishes_everywhere_and_records_usage(world):
     drive, layout, photos, cfg, client = world
     blogger = FakeBlogger()
     naver = FakePublisher("네이버 블로그")
@@ -155,11 +158,11 @@ def test_full_success_publishes_everywhere_and_archives(world):
     assert slides[-2].label == "본연 | 작업 전 · 후" and slides[-1].label == ""
     assert bgm_path is not None and seconds == 15.0
 
-    archive, names = _archive_children(drive, layout)
-    assert drive.path_of(archive.id) == f"{ROOT}/{USED_FOLDER}/2026-09-28_1000_로프청소"
-    assert {"tiktok.mp4", "post.txt"} <= set(names)
-    for ids in photos.values():
-        assert all(drive.items[i]["parent"] == archive.id for i in ids)
+    stage_folders = layout.stage_folders["로프청소"]
+    for stage, ids in photos.items():  # 사진은 원래 폴더에 그대로, 사용 횟수만 1
+        assert all(drive.items[i]["parent"] == stage_folders[stage] for i in ids)
+    assert _post_counts(drive, photos) == {1}
+    assert generator.reused == [False]
 
     ts = _progress_ts(client)
     assert client.messages[0]["text"] == "🧹 로프청소 포스팅 진행 중"
@@ -189,8 +192,7 @@ def test_partial_failure_sends_manual_fallbacks(world):
     assert any("틱톡은 만들어 둔 영상을 수동 업로드" in t for t in thread_texts)
     assert "틱톡 영상" in _upload_titles(client, ts)
     assert "블로그·틱톡 발행 — 구글 블로그 ✅ · 네이버 블로그 ❌ · 틱톡 ❌" in _checklist(client, ts)
-    _, names = _archive_children(drive, layout)
-    assert names  # 1곳이라도 성공 → 사진 이동
+    assert _post_counts(drive, photos) == {1}  # 1곳이라도 성공 → 사용 기록
 
 
 def test_all_failed_keeps_photos_for_retry(world):
@@ -198,10 +200,7 @@ def test_all_failed_keeps_photos_for_retry(world):
     code = run_post(cfg, RunOptions(), _services(drive, client, blogger=FakeBlogger(RuntimeError("401"))))
 
     assert code == 1
-    archive, _ = _archive_children(drive, layout)
-    assert archive is None
-    first = photos["작업전"][0]
-    assert drive.items[first]["parent"] == layout.stage_folders["로프청소"]["작업전"]
+    assert _post_counts(drive, photos) == {0}  # 전부 실패 → 기록 안 함 (다음에 새 사진으로 다시 사용)
     ts = _progress_ts(client)
     report = _report(client, ts)
     assert "❌ *구글 블로그*\n401" in report
@@ -209,10 +208,10 @@ def test_all_failed_keeps_photos_for_retry(world):
     assert client.last_text(ts) == "❌ 로프청소 포스팅 실패"
     checklist = _checklist(client, ts)
     assert "❌ 블로그·틱톡 발행" in checklist
-    assert "⏭️ 사용 사진 보관 — 발행 실패" in checklist
+    assert "⏭️ 사진 사용 기록 — 발행 실패" in checklist
 
 
-def test_review_is_published_and_archived_and_area_rotates(world):
+def test_review_is_published_and_recorded_and_area_rotates(world):
     drive, layout, photos, cfg, client = world
     review = drive.add_file(layout.review_folder_id, "후기1.jpg", jpeg_bytes())
     drive.add_file(layout.review_folder_id, "후기2.jpg", jpeg_bytes())  # REVIEWS_PER_POST=1 → 다음 글에 사용
@@ -232,9 +231,8 @@ def test_review_is_published_and_archived_and_area_rotates(world):
     assert html_body.count("lh3.googleusercontent.com") == 5 + 1 + 1 + 2  # 사진+비교+후기+헤더/푸터
     naver_reviews = naver.calls[0][5]
     assert len(naver_reviews) == 1
-    archive, names = _archive_children(drive, layout)
-    assert drive.items[review]["parent"] == archive.id
-    assert len(drive.list_images(layout.review_folder_id)) == 1
+    assert drive.items[review]["post_count"] == 1  # 다음 글에는 덜 쓴 후기2 가 먼저
+    assert len(drive.list_images(layout.review_folder_id)) == 2
 
 
 def test_actual_site_location_overrides_rotation(world):
@@ -284,47 +282,52 @@ def test_video_failure_only_fails_tiktok(world):
     assert "❌ *틱톡*\n영상 생성 실패: ffmpeg crashed" in _report(client, ts)
     assert "틱톡 영상" not in _upload_titles(client, ts)  # 업로드할 영상이 없음
     assert "❌ 틱톡 영상 제작 — 영상 생성 실패: ffmpeg crashed" in _checklist(client, ts)
-    archive, names = _archive_children(drive, layout)
-    assert archive is not None and "tiktok.mp4" not in names
+    assert _post_counts(drive, photos) == {1}
 
 
-def test_partial_move_failure_still_reports_results(world):
+def test_partial_usage_record_failure_still_reports_results(world):
     drive, layout, photos, cfg, client = world
     stuck = photos["작업후"][0]
-    original_move = drive.move
+    original_record = drive.record_post
 
-    def flaky_move(file_id, new_parent_id):
+    def flaky_record(file_id, count, when):
         if file_id == stuck:
             raise RuntimeError("Drive 503")
-        original_move(file_id, new_parent_id)
+        original_record(file_id, count, when)
 
-    drive.move = flaky_move
+    drive.record_post = flaky_record
     code = run_post(cfg, RunOptions(), _services(drive, client, blogger=FakeBlogger()))
 
     assert code == 0
-    archive, _ = _archive_children(drive, layout)
-    moved = [i for ids in photos.values() for i in ids if drive.items[i]["parent"] == archive.id]
-    assert len(moved) == 4
+    assert sum(drive.items[i].get("post_count", 0) for ids in photos.values() for i in ids) == 4
     ts = _progress_ts(client)
     report = _report(client, ts)
-    assert "사진 1장 이동 실패" in report
+    assert "사진 1장 사용 기록 실패" in report
     assert "✅ *구글 블로그*" in report
-    assert "❌ 사용 사진 보관 — 4장 이동, 1장 실패" in _checklist(client, ts)
+    assert "❌ 사진 사용 기록 — 4장 기록 · 사진은 폴더에 그대로, 1장 실패" in _checklist(client, ts)
 
 
-def test_archive_folder_failure_still_reports_results(world):
+def test_second_run_reuses_photos_as_work_case_without_comparison(world):
     drive, layout, photos, cfg, client = world
-    services = _services(drive, client, blogger=FakeBlogger())
-    original_ensure = drive.ensure_folder
+    generator = FakeGenerator()
+    blogger = FakeBlogger()
+    services = _services(drive, client, generator=generator, blogger=blogger)
 
-    def failing_ensure(parent_id, name):
-        if parent_id == layout.used_folder_id:
-            raise RuntimeError("quota")
-        return original_ensure(parent_id, name)
-
-    drive.ensure_folder = failing_ensure
     assert run_post(cfg, RunOptions(), services) == 0
-    assert "사진 5장 이동 실패" in _report(client, _progress_ts(client))
+    assert run_post(cfg, RunOptions(location="고잔동"), services) == 0
+
+    assert generator.reused == [False, True]  # 두 번째는 이미 쓴 사진 재조합 → '작업 사례' 글
+    assert "작업 전(좌) · 작업 후(우)" in blogger.calls[0][1]
+    assert "작업 전(좌) · 작업 후(우)" not in blogger.calls[1][1]  # 다른 현장끼리일 수 있어 전후 비교 생략
+    assert all("작업 전 · 후" not in slide.label for slide in fake_video.calls[1][0])
+    assert not generator.areas[1].is_site  # 재조합 글은 실제 현장 위치로 쓰지 않음
+    assert _post_counts(drive, photos) == {2}
+
+
+def test_area_turn_changes_between_morning_and_evening_runs():
+    morning = datetime(2026, 9, 29, 7, 0, tzinfo=KST)
+    assert area_turn(morning.replace(hour=17)) == area_turn(morning) + 1
+    assert area_turn(morning.replace(day=30)) == area_turn(morning) + 2
 
 
 def test_dry_run_publishes_nothing_but_sends_preview(world):
@@ -334,14 +337,14 @@ def test_dry_run_publishes_nothing_but_sends_preview(world):
 
     assert code == 0
     assert blogger.calls == []
-    assert _archive_children(drive, layout)[0] is None
+    assert _post_counts(drive, photos) == {0}
     ts = _progress_ts(client)
     assert client.messages[0]["text"] == "🧹 로프청소 포스팅 진행 중 [테스트]"
     assert client.last_text(ts) == "🧪 로프청소 테스트 완료"
     assert _upload_titles(client, ts) == ["선택된 사진", "전후 비교", "원고", "구글 블로그 미리보기", "네이버 블로그 미리보기", "틱톡 영상"]
     checklist = _checklist(client, ts)
     assert "⏭️ 블로그·틱톡 발행 — 테스트 실행" in checklist
-    assert "⏭️ 사용 사진 보관 — 테스트 실행" in checklist
+    assert "⏭️ 사진 사용 기록 — 테스트 실행" in checklist
     assert "테스트 실행 결과" in _report(client, ts)
 
 
@@ -394,7 +397,7 @@ def test_error_mid_run_is_reported_in_progress_thread(world):
     drive, layout, photos, cfg, client = world
 
     class BrokenGenerator(FakeGenerator):
-        def generate(self, category, images_by_stage, area=None):
+        def generate(self, category, images_by_stage, area=None, reused=False):
             raise RuntimeError("Gemini 503 overloaded")
 
     with pytest.raises(AlreadyReported, match="Gemini 503"):
@@ -407,7 +410,7 @@ def test_error_mid_run_is_reported_in_progress_thread(world):
     assert "❌ AI 원고 작성 — Gemini 503 overloaded" in checklist
     assert "⬜ 틱톡 영상 제작" in checklist
     assert any("'AI 원고 작성' 단계 오류" in m["text"] for m in client.thread(ts))
-    assert _archive_children(drive, layout)[0] is None  # 사진은 그대로
+    assert _post_counts(drive, photos) == {0}  # 기록 안 함
 
 
 def test_mid_run_failure_writes_step_summary(world, tmp_path, monkeypatch):

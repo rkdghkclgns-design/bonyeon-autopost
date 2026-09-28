@@ -97,20 +97,22 @@ def min_body_chars(photo_counts: Mapping[str, int]) -> int:
     return MIN_CHARS_BASE + MIN_CHARS_PER_PHOTO * sum(photo_counts.values())
 
 
-def area_rules(area: AreaPick | None, category: str, company: str) -> tuple[str, str]:
+def area_rules(
+    area: AreaPick | None, category: str, company: str, headline: str = "○○ 현장, ○○까지 깔끔하게"
+) -> tuple[str, str]:
     """(제목 예시, 지역 규칙) — 실제 현장 위치와 '서비스 지역 키워드'를 구분해 거짓 위치를 쓰지 않게 한다."""
     service = f"outro 에 '{SERVICE_AREA_LINE}' 한 줄을 그대로 넣습니다."
     if area is None:
-        return f"[{category}] ○○ 현장, ○○까지 깔끔하게", f"지역명은 쓰지 않습니다. {service}"
+        return f"[{category}] {headline}", f"지역명은 쓰지 않습니다. {service}"
     if area.is_site:
         place = area.dong or area.region
         return (
-            f"[{place} {category}] ○○ 현장, ○○까지 깔끔하게",
+            f"[{place} {category}] {headline}",
             f"이번 현장은 실제로 '{area.label}'에 있습니다. title·intro 에 '{place} {category}' 를 자연스럽게 넣되 "
             f"더 구체적인 주소·건물명은 쓰지 않습니다. {service}",
         )
     return (
-        f"○○ 현장, ○○까지 깔끔하게 | {area.region} {category} {company}",
+        f"{headline} | {area.region} {category} {company}",
         f"서비스 지역 키워드는 '{area.region}'(대표 동: {area.dong}) 입니다. 이번 현장의 실제 위치는 알 수 없으므로 "
         f"현장이 {area.dong or area.region}에 있었다고 쓰지 마세요. title 은 위 예시처럼 끝에 "
         f"'| {area.region} {category} {company}' 를 붙이고, intro 에는 지역명을 쓰지 않으며, {service}",
@@ -321,24 +323,59 @@ def area_keyword(area: AreaPick | None, category: str) -> str:
     return f"{place} {category}".strip()
 
 
+@dataclass(frozen=True)
+class _Framing:
+    role: str
+    headline: str
+    intro: str
+    closing: str
+
+
+def _framing(company: str, category: str, reused: bool) -> _Framing:
+    """새로 올린 사진이면 '현장 기록', 이전에 쓴 사진을 다시 조합했으면 '작업 사례' 글.
+
+    다시 조합한 사진은 여러 현장 사진이 섞였을 수 있으므로, 새 현장을 다녀온 것처럼 쓰지 않는다 (허위 현장 방지).
+    """
+    if not reused:
+        return _Framing(
+            role=(f"업체가 직접 쓰는 '현장 기록' 글을 작성합니다.\n"
+                  f"위 사진들은 '{category}' 현장에서 찍은 것이고, 각 사진 앞에 [단계 사진 번호] 표시가 있습니다."),
+            headline="○○ 현장, ○○까지 깔끔하게",
+            intro="오늘 현장이 어떤 곳이고 어떤 상태였는지",
+            closing=f'"이상 {category} 현장이었습니다" 식의 맺음',
+        )
+    return _Framing(
+        role=(f"업체가 직접 쓰는 '{category} 작업 사례' 글을 작성합니다.\n"
+              f"위 사진들은 {company}가 그동안 작업한 여러 '{category}' 현장의 실제 사진이며(서로 다른 현장 사진이 "
+              f"섞여 있을 수 있음), 각 사진 앞에 [단계 사진 번호] 표시가 있습니다.\n"
+              f"이 글은 새 현장 방문기가 아닙니다. '이번에 다녀온 현장', '오늘 현장'처럼 한 곳을 새로 다녀온 것처럼 쓰지 말고, "
+              f"사진끼리 같은 장소라고 단정하지 않습니다. 실제 작업 사진을 예로 들어 {category}를 어떤 순서·방법으로 하는지와 "
+              f"관리 포인트를 소개합니다. 사진에 보이는 장면에 맞춰 매번 다른 주제(오염 유형·작업 방법 등)를 골라 씁니다."),
+        headline="○○ 청소, 이렇게 진행합니다",
+        intro=f"이번 글에서 소개할 {category} 작업 포인트(사진에 보이는 오염 유형과 작업 방법)",
+        closing=f'"이상 {company}의 {category} 작업 사례였습니다" 식의 맺음',
+    )
+
+
 def build_prompt(
     company: str,
     phone: str,
     category: str,
     photo_counts: Mapping[str, int],
     area: AreaPick | None = None,
+    reused: bool = False,
 ) -> str:
     present = [s for s in STAGES if photo_counts.get(s)]
     stage_plan = ", ".join(f"{s} 사진 {photo_counts[s]}장" for s in present)
     specialty = CATEGORY_DESCRIPTIONS.get(category, category)
-    title_example, area_rule = area_rules(area, category, company)
-    return f"""당신은 청소 전문업체 '{company}'의 블로그 담당자이며, 업체가 직접 쓰는 '현장 기록' 글을 작성합니다.
-위 사진들은 '{category}' 현장에서 찍은 것이고, 각 사진 앞에 [단계 사진 번호] 표시가 있습니다.
+    framing = _framing(company, category, reused)
+    title_example, area_rule = area_rules(area, category, company, framing.headline)
+    return f"""당신은 청소 전문업체 '{company}'의 블로그 담당자이며, {framing.role}
 
 [글 구성]
 1. title: 검색 키워드가 들어간 제목. 예) "{title_example}" (50자 이내)
-2. intro: "안녕하세요! {specialty} 전문 {company}입니다." 로 시작해, 오늘 현장이 어떤 곳이고
-   어떤 상태였는지, 이런 오염을 방치하면 어떤 문제가 생기는지까지 5~7문장으로 소개합니다.
+2. intro: "안녕하세요! {specialty} 전문 {company}입니다." 로 시작해, {framing.intro},
+   이런 오염을 방치하면 어떤 문제가 생기는지까지 5~7문장으로 소개합니다.
 3. sections: 단계마다
    - heading: 인용구로 들어갈 짧은 소제목. 궁금증을 주는 문장 (예: "작업 전, 이 정도였어요")
    - body: 이 단계를 여는 3~4문장 (이 단계에서 무엇을 왜, 어떤 순서로 하는지)
@@ -347,7 +384,7 @@ def build_prompt(
      '첫 번째 사진은', '사진 1', '촬영한 사진으로' 같은 사진 번호·촬영 언급 없이 장면 자체를 바로 설명합니다.
 4. tips: '{category} 관리 TIP' 문단 5~6문장. 이런 현장을 오래 깨끗하게 유지하는 일반적인 관리 요령과
    전문 청소 권장 주기를 알려줍니다. (이 현장에 대한 새로운 사실을 지어내지 말고 일반 상식 수준으로)
-5. outro: 전후 차이를 한 줄로 정리 → "이상 {category} 현장이었습니다" 식의 맺음 →
+5. outro: 전후 차이를 한 줄로 정리 → {framing.closing} →
    "현장 사진을 보내주시면 상담·견적 도와드립니다" 안내 → 전화 {phone}
 
 [문체]
@@ -403,7 +440,8 @@ class ContentGenerator:
         self._sleep = sleep
 
     def _build_contents(
-        self, category: str, images_by_stage: Mapping[str, Sequence[Path]], area: AreaPick | None
+        self, category: str, images_by_stage: Mapping[str, Sequence[Path]], area: AreaPick | None,
+        reused: bool = False,
     ) -> list:
         from google.genai import types
 
@@ -413,17 +451,21 @@ class ContentGenerator:
                 contents.append(f"[{STAGE_LABELS[stage]} 사진 {index}]")
                 contents.append(types.Part.from_bytes(data=path.read_bytes(), mime_type="image/jpeg"))
         counts = {s: len(images_by_stage.get(s, ())) for s in STAGES}
-        contents.append(build_prompt(self._company, self._phone, category, counts, area))
+        contents.append(build_prompt(self._company, self._phone, category, counts, area, reused))
         return contents
 
     def generate(
-        self, category: str, images_by_stage: Mapping[str, Sequence[Path]], area: AreaPick | None = None
+        self,
+        category: str,
+        images_by_stage: Mapping[str, Sequence[Path]],
+        area: AreaPick | None = None,
+        reused: bool = False,
     ) -> PostContent:
         from google.genai import types
 
         counts = {s: len(images_by_stage.get(s, ())) for s in STAGES}
         present = [s for s in STAGES if counts[s]]
-        contents = self._build_contents(category, images_by_stage, area)
+        contents = self._build_contents(category, images_by_stage, area, reused)
         config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.8)
         min_chars = min_body_chars(counts)
 

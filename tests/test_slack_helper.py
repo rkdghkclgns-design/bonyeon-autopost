@@ -50,10 +50,10 @@ def test_notifier_redacts_text_blocks_and_comments(tmp_path):
     assert client.messages[1]["text"].count("```") == 2
 
 
-def test_report_blocks_list_move_failures():
-    blocks = build_report_blocks("정기청소", "t", [PublishResult("x", True)], moved_count=2, move_failures=["a.jpg", "<b>.jpg"])
+def test_report_blocks_list_record_failures():
+    blocks = build_report_blocks("정기청소", "t", [PublishResult("x", True)], used_count=2, record_failures=["a.jpg", "<b>.jpg"])
     text = "\n".join(b.get("text", {}).get("text", "") for b in blocks)
-    assert "사진 2장 이동 실패" in text
+    assert "사진 2장 사용 기록 실패" in text
     assert "a.jpg, &lt;b&gt;.jpg" in text
 
 
@@ -63,15 +63,15 @@ def test_report_blocks_show_status_and_links():
         PublishResult("네이버 블로그", False, message="세션 만료"),
         PublishResult.skip("틱톡", "미설정"),
     ]
-    blocks = build_report_blocks("로프청소", "제목", results, archive_url="https://drive/x", moved_count=6)
+    blocks = build_report_blocks("로프청소", "제목", results, used_count=6)
     texts = [b.get("text", {}).get("text", "") for b in blocks]
     joined = "\n".join(texts)
     assert blocks[0]["text"]["text"].startswith("🧹")
     assert "✅ *구글 블로그*  <https://b/1|게시글 열기>" in joined
     assert "❌ *네이버 블로그*\n세션 만료" in joined
     assert "⏭️ *틱톡*" in joined
-    assert "6장" in blocks[-1]["elements"][0]["text"]
-    assert "<https://drive/x|보관 폴더>" in blocks[-1]["elements"][0]["text"]
+    footer = blocks[-1]["elements"][0]["text"]
+    assert "사용한 사진 6장" in footer and "폴더에 그대로" in footer and "99_사용완료" not in footer
 
 
 def test_report_blocks_dry_run_and_truncation():
@@ -79,7 +79,7 @@ def test_report_blocks_dry_run_and_truncation():
     blocks = build_report_blocks("정기청소", "t", [PublishResult("x", False, message=long_message)], dry_run=True)
     assert "테스트" in blocks[0]["text"]["text"]
     assert all(len(b.get("text", {}).get("text", "")) <= 2900 for b in blocks)
-    assert "사진 이동 없음" in blocks[-1]["elements"][0]["text"]
+    assert "사진 사용 기록 없음" in blocks[-1]["elements"][0]["text"]
 
 
 def test_setup_blocks():

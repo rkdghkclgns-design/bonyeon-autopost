@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType
@@ -29,7 +30,7 @@ from .constants import (
 from .drive_helper import DriveFile, DriveHelper, folder_url, public_image_url
 from .image_wash import wash_all
 from .naver_publisher import NaverPublisher
-from .photo_selector import PhotoSelection, UnknownCategoryError, select_photos
+from .photo_selector import PhotoSelection, UnknownCategoryError, select_photos, usage_order
 from .regions import pick_area, site_area
 from .results import PublishResult
 from .setup_engine import DriveLayout, SetupReport, ensure_layout
@@ -83,12 +84,14 @@ class PostMedia:
     reviews: tuple[Path, ...] = ()  # 실제 고객후기 캡처 (메타데이터 제거본)
     # 영상용 원본 고해상도 사진 (영상 프레임에는 사진 메타데이터가 남지 않음). 비면 photos 사용
     video_photos: Mapping[str, tuple[Path, ...]] = MappingProxyType({})
+    # 작업 전·후 사진이 같은 현장끼리인지 — 이전 사진을 다시 조합했으면 False (전후 비교를 만들지 않음)
+    pair_stages: bool = True
 
 
 @dataclass(frozen=True)
-class ArchiveOutcome:
-    url: str = ""
-    moved: int = 0
+class UsageOutcome:
+    """사진 사용 기록 결과 — 사진은 옮기지 않고 드라이브 파일에 사용 횟수만 남긴다."""
+    recorded: int = 0
     failed: tuple[str, ...] = ()
 
 
@@ -230,7 +233,7 @@ def _video_comparison(media: PostMedia, workdir: Path) -> Path | None:
     """세로 영상용 위(작업 전)/아래(작업 후) 비교 이미지 — 블로그용 가로 비교는 세로 화면에서 너무 작아진다."""
     source = media.video_photos or media.photos
     before, after = source.get(STAGE_BEFORE, ()), source.get(STAGE_AFTER, ())
-    if not before or not after:
+    if not media.pair_stages or not before or not after:
         return None
     try:
         return make_vertical_comparison(before[0], after[0], workdir / "compare_vertical.jpg")
@@ -308,7 +311,7 @@ def _select_reviews(drive: DriveHelper, layout: DriveLayout, limit: int) -> tupl
     if limit <= 0 or not layout.review_folder_id:
         return ()
     try:
-        return tuple(drive.list_images(layout.review_folder_id)[:limit])
+        return tuple(usage_order(drive.list_images(layout.review_folder_id), random.Random())[:limit])
     except Exception:
         log.exception("고객후기 폴더 조회 실패 — 후기 없이 진행")
         return ()
@@ -326,37 +329,18 @@ def _download_reviews(
     return tuple(services.washer(originals, workdir / "washed" / "reviews"))
 
 
-def _archive(
-    services: Services,
-    layout: DriveLayout,
-    files: Sequence[DriveFile],
-    extra_files: Sequence[Path | None],
-    folder_name: str,
-) -> ArchiveOutcome:
-    """사진을 한 장씩 이동 — 일부가 실패해도 나머지는 계속 옮기고 실패 목록을 보고한다."""
-    drive = services.drive
-    try:
-        archive, _ = drive.ensure_folder(layout.used_folder_id, folder_name)
-    except Exception:
-        log.exception("보관 폴더 생성 실패")
-        return ArchiveOutcome(failed=tuple(f.name for f in files))
-
-    moved, failed = 0, []
+def _record_usage(drive: DriveHelper, files: Sequence[DriveFile], now: datetime) -> UsageOutcome:
+    """사용한 사진마다 사용 횟수를 1 올린다 — 일부가 실패해도 나머지는 계속 기록하고 실패 목록을 보고한다."""
+    when = now.isoformat(timespec="seconds")
+    recorded, failed = 0, []
     for file in files:
         try:
-            drive.move(file.id, archive.id)
-            moved += 1
+            drive.record_post(file.id, file.post_count + 1, when)
+            recorded += 1
         except Exception:
-            log.exception("사진 이동 실패: %s", file.name)
+            log.exception("사진 사용 기록 실패: %s", file.name)
             failed.append(file.name)
-    for path in extra_files:
-        if path is None or not path.is_file():
-            continue
-        try:
-            drive.upload(archive.id, path)
-        except Exception:
-            log.exception("보관 파일 업로드 실패: %s", path.name)
-    return ArchiveOutcome(folder_url(archive.id), moved, tuple(failed))
+    return UsageOutcome(recorded, tuple(failed))
 
 
 class AlreadyReported(RuntimeError):
@@ -406,6 +390,11 @@ def _thread_fallbacks(reporter: ProgressReporter, results: Sequence[PublishResul
                       stage="publish")
 
 
+def area_turn(now: datetime) -> int:
+    """하루 두 번(오전·오후) 실행해도 지역 키워드가 겹치지 않도록 반나절마다 1씩 증가."""
+    return now.toordinal() * 2 + (1 if now.hour >= 12 else 0)
+
+
 def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
     if services.generator is None:
         raise RuntimeError("포스팅 모드에는 ContentGenerator 가 필요합니다")
@@ -428,8 +417,11 @@ def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
         return 0
 
     now = services.now()
-    # 실제 현장 위치가 주어지면 그 위치, 아니면 서비스 지역(시·구·동)을 날짜 순서로 순환
-    area = site_area(options.location) or pick_area(cfg.service_areas, now.toordinal())
+    # 실제 현장 위치가 주어지면 그 위치, 아니면 서비스 지역(시·구·동)을 오전·오후 실행마다 순환
+    area = site_area(options.location) or pick_area(cfg.service_areas, area_turn(now))
+    if area is not None and area.is_site and selection.reused:
+        # 이전 사진을 다시 조합한 글은 그 위치의 현장이 아니므로 위치는 서비스 지역 키워드로만 쓴다
+        area = replace(area, is_site=False)
     tag = " [테스트]" if options.dry_run else ""
     reporter = ProgressReporter(
         slack, f"🧹 {selection.category} 포스팅 진행 중{tag}",
@@ -468,18 +460,21 @@ def _run_steps(
     })
     assets = _download_assets(services.drive, layout, workdir)
     review_files = _select_reviews(services.drive, layout, cfg.reviews_per_post)
+    # 이전 사진을 다시 조합했으면 작업 전·후가 다른 장소일 수 있어 전후 비교 이미지를 만들지 않는다
+    comparison = None if selection.reused else _make_comparison(washed, workdir)
     media = PostMedia(
-        washed, _make_comparison(washed, workdir), _download_reviews(services, review_files, workdir),
-        video_photos=originals,
+        washed, comparison, _download_reviews(services, review_files, workdir),
+        video_photos=originals, pair_stages=not selection.reused,
     )
-    reporter.file(make_contact_sheet(washed, workdir / "selected.jpg"), "선택된 사진", "📸 이번 글에 쓰는 사진",
-                  stage="prepare")
+    mix = f"새 사진 {selection.fresh_count}장" + (" · 이전 사진 재조합" if selection.reused else "")
+    reporter.file(make_contact_sheet(washed, workdir / "selected.jpg"), "선택된 사진",
+                  f"📸 이번 글에 쓰는 사진 ({mix})", stage="prepare")
     reporter.file(media.comparison, "전후 비교", "🖼️ 전후 비교 이미지", stage="prepare")
     reporter.step("prepare", "done",
-                  f"전후 비교 {'O' if media.comparison else 'X'} · 고객후기 {len(media.reviews)}장")
+                  f"{mix} · 전후 비교 {'O' if media.comparison else 'X'} · 고객후기 {len(media.reviews)}장")
 
     reporter.step("draft", "run")  # AI 원고
-    content = services.generator.generate(category, washed, area=area)
+    content = services.generator.generate(category, washed, area=area, reused=selection.reused)
     post_txt = workdir / "post.txt"
     post_txt.write_text(content.plain_text() + f"\n\n[틱톡 캡션]\n{content.tiktok_caption}\n", encoding="utf-8")
     reporter.step("draft", "done", f"본문 {content.text_length():,}자")
@@ -509,22 +504,20 @@ def _run_steps(
         )
         reporter.step("publish", "done" if any(r.ok for r in results) else "fail", _results_line(results))
 
-    outcome = ArchiveOutcome()  # 사진 보관 (1곳이라도 성공했을 때만 — 전부 실패면 다음에 재시도)
+    outcome = UsageOutcome()  # 사진 사용 기록 (1곳이라도 성공했을 때만 — 전부 실패면 기록 안 함)
     if options.dry_run:
-        reporter.step("archive", "skip", "테스트 실행 — 사진 그대로 둠")
+        reporter.step("usage", "skip", "테스트 실행 — 기록 안 함")
     elif any(r.ok for r in results):
-        reporter.step("archive", "run")
-        outcome = _archive(
-            services, layout, [*selection.all_files(), *review_files], [video_path, post_txt],
-            f"{now:%Y-%m-%d_%H%M}_{category}",
-        )
-        reporter.step("archive", "fail" if outcome.failed else "done",
-                      f"{outcome.moved}장 이동" + (f", {len(outcome.failed)}장 실패" if outcome.failed else ""))
+        reporter.step("usage", "run")
+        outcome = _record_usage(services.drive, [*selection.all_files(), *review_files], now)
+        reporter.step("usage", "fail" if outcome.failed else "done",
+                      f"{outcome.recorded}장 기록 · 사진은 폴더에 그대로"
+                      + (f", {len(outcome.failed)}장 실패" if outcome.failed else ""))
     else:
-        reporter.step("archive", "skip", "발행 실패 — 다음 실행에 다시 사용")
+        reporter.step("usage", "skip", "발행 실패 — 기록 안 함")
 
     _thread_fallbacks(reporter, results, content)
-    blocks = build_report_blocks(category, content.title, results, outcome.url, outcome.moved,
+    blocks = build_report_blocks(category, content.title, results, outcome.recorded,
                                  options.dry_run, outcome.failed)
     reporter.note(f"🧹 [청소 자동화] {category} 포스팅 결과", blocks, stage="publish")
     ok = options.dry_run or any(r.ok for r in results)
