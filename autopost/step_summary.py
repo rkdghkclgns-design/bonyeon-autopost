@@ -40,7 +40,7 @@ def build_step_summary(
         lines.append(f"| {r.platform} | {status} | {link} | {_cell(r.message)[:120]} |")
     if getattr(outcome, "url", ""):
         lines += ["", f"사용한 사진 {outcome.moved}장 → [보관 폴더]({outcome.url})"]
-    lines += ["", "영상·원고·사진은 아래 **Artifacts** 와 슬랙 진행 스레드에서 확인할 수 있습니다."]
+    lines += ["", "영상·원고·사진은 슬랙 진행 스레드에서 확인할 수 있습니다."]
     return "\n".join(lines) + "\n"
 
 

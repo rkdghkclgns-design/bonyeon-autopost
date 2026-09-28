@@ -129,11 +129,14 @@ jobs:
             --data "{\"text\":\"🚨 [청소 자동화] GitHub Actions 준비 단계에서 실패했습니다 (패키지 설치 등). 로그: ${RUN_URL}\"}" \
             "$SLACK_WEBHOOK_URL"
 
-      - name: 결과물 보관 (영상·원고·오류 스크린샷, 7일)
-        if: always()
+      - name: 오류 진단 자료 보관 (실패 시에만, 3일)
+        # 정상 실행의 결과물(사진·원고·영상)은 슬랙 진행 스레드에 올라가므로 실패했을 때만 보관한다.
+        # 계정의 Artifacts 저장 용량이 가득 차도 전체 실행이 실패로 표시되지 않게 한다.
+        if: failure()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: autopost-output-${{ github.run_id }}
           path: output/
-          retention-days: 7
+          retention-days: 3
           if-no-files-found: ignore
