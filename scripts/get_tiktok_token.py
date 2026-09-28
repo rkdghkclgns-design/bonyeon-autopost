@@ -9,7 +9,8 @@
   python scripts/get_tiktok_token.py
 
 1. Client Key / Client Secret 을 묻는 작은 창에 붙여넣기 (.env 에 이미 있으면 묻지 않음)
-2. 열린 크롬 창에서 틱톡 계정으로 직접 로그인 → '허용'
+2. 평소 쓰는 크롬에서 틱톡 '허용' → 이동한 페이지 주소를 작은 창에 붙여넣기
+   (--playwright: 새 창을 띄워 직접 로그인하면 주소를 자동 감지)
 3. 발급된 값을 .env 와 GitHub 시크릿(gh CLI)에 자동 저장 — 화면에는 값을 출력하지 않음
 """
 from __future__ import annotations
@@ -26,6 +27,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from autopost.envfile import update_env_file  # noqa: E402
 from autopost.local_secrets import save_everywhere  # noqa: E402
 from autopost.setup_browser import launch_visible_browser  # noqa: E402
 
@@ -103,11 +105,19 @@ def read_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def wait_for_redirect(page, redirect_uri: str, timeout_s: float, poll_ms: int = 1000) -> str:
+def wait_for_redirect(context, redirect_uri: str, timeout_s: float, poll_ms: int = 1000) -> str:
+    """창(탭)이 여러 개가 되거나 일부가 닫혀도, 열린 창 중 하나가 Redirect URI 로 돌아오면 그 주소를 돌려준다."""
     for _ in range(max(1, int(timeout_s * 1000 / poll_ms))):
-        if is_redirect(page.url, redirect_uri):
-            return page.url
-        page.wait_for_timeout(poll_ms)
+        pages = [p for p in context.pages if not p.is_closed()]
+        if not pages:  # 사용자가 창을 모두 닫음
+            return ""
+        for page in pages:
+            if is_redirect(page.url, redirect_uri):
+                return page.url
+        try:
+            pages[-1].wait_for_timeout(poll_ms)
+        except Exception:  # 기다리는 사이 그 창이 닫힘 → 남은 창으로 계속 확인
+            continue
     return ""
 
 
@@ -116,12 +126,34 @@ def authorize_in_browser(client_key: str, redirect_uri: str, state: str, timeout
 
     with sync_playwright() as playwright:
         browser = launch_visible_browser(playwright.chromium)
-        page = browser.new_context(locale="ko-KR").new_page()
-        page.goto(build_authorize_url(client_key, redirect_uri, state))
+        context = browser.new_context(locale="ko-KR")
+        context.new_page().goto(build_authorize_url(client_key, redirect_uri, state))
         print(f"열린 창에서 틱톡에 로그인하고 '허용'을 누르세요. 최대 {int(timeout_s // 60)}분 기다립니다...")
-        redirected = wait_for_redirect(page, redirect_uri, timeout_s)
-        browser.close()
+        redirected = wait_for_redirect(context, redirect_uri, timeout_s)
+        try:
+            browser.close()
+        except Exception:
+            pass
     return redirected
+
+
+def authorize_in_default_browser(
+    authorize_url: str, prompt: Prompt = tk_prompt, opener: Callable[[str], bool] | None = None
+) -> str:
+    """평소 쓰는 크롬(기본 브라우저)에서 허용 → 이동한 페이지 주소를 입력 창에 붙여넣게 한다.
+
+    이미 틱톡에 로그인된 브라우저를 쓰므로 다시 로그인할 필요가 없다.
+    """
+    import webbrowser
+
+    (opener or webbrowser.open)(authorize_url)
+    print("크롬에서 틱톡 '허용'을 누른 뒤, 이동한 페이지의 주소를 입력 창에 붙여넣으세요...")
+    return prompt(
+        "틱톡 설정 (3/3)",
+        "크롬에서 '허용'을 누르면 본연클린 블로그 페이지로 이동합니다.\n"
+        "그 페이지의 주소창 주소 전체를 복사해 여기에 붙여넣으세요.",
+        False,
+    ).strip()
 
 
 def exchange_code(client_key: str, client_secret: str, code: str, redirect_uri: str, post=requests.post) -> dict:
@@ -147,6 +179,8 @@ def main() -> int:
     parser.add_argument("--env", default=".env", help="값을 저장할 .env 경로 (기본: .env)")
     parser.add_argument("--no-upload", action="store_true", help="GitHub 시크릿 등록을 건너뜀")
     parser.add_argument("--timeout", type=float, default=600, help="로그인 대기 시간(초), 기본 10분")
+    parser.add_argument("--playwright", action="store_true",
+                        help="평소 크롬 대신 새 브라우저 창을 띄워 주소를 자동 감지 (틱톡 재로그인 필요)")
     args = parser.parse_args()
 
     env_path = Path(args.env)
@@ -155,9 +189,14 @@ def main() -> int:
     except ValueError as exc:
         print(f"❌ {exc}")
         return 1
+    # 로그인 단계에서 실패해도 다시 실행할 때 키를 또 묻지 않도록 로컬 .env 에 먼저 저장
+    update_env_file(env_path, {"TIKTOK_CLIENT_KEY": client_key, "TIKTOK_CLIENT_SECRET": client_secret})
 
     state = secrets.token_urlsafe(16)
-    redirected = authorize_in_browser(client_key, args.redirect_uri, state, args.timeout)
+    if args.playwright:
+        redirected = authorize_in_browser(client_key, args.redirect_uri, state, args.timeout)
+    else:
+        redirected = authorize_in_default_browser(build_authorize_url(client_key, args.redirect_uri, state))
     if not redirected:
         print("❌ 틱톡 허용이 확인되지 않았습니다 (시간 초과 또는 창을 닫음). 다시 실행하세요.")
         return 1

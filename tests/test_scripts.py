@@ -119,26 +119,60 @@ def test_read_env_file_ignores_comments(tmp_path):
     assert tiktok.read_env_file(tmp_path / "missing") == {}
 
 
+class _Page:
+    def __init__(self, urls, closes_after=None):
+        self._urls = iter(urls)
+        self.url = next(self._urls)
+        self._ticks = 0
+        self._closes_after = closes_after
+
+    def is_closed(self):
+        return self._closes_after is not None and self._ticks >= self._closes_after
+
+    def wait_for_timeout(self, ms):
+        self._ticks += 1
+        if self.is_closed():
+            raise RuntimeError("Target page, context or browser has been closed")
+        self.url = next(self._urls, self.url)
+
+
+class _Context:
+    def __init__(self, *pages):
+        self.pages = list(pages)
+
+
+def test_authorize_in_default_browser_opens_url_and_takes_pasted_address():
+    opened, asked = [], []
+
+    def prompt(title, message, secret):
+        asked.append((title, secret))
+        return "  https://r.example/?code=c&state=s \n"
+
+    result = tiktok.authorize_in_default_browser("https://www.tiktok.com/v2/auth/authorize/?x=1", prompt,
+                                                 opener=opened.append)
+    assert opened == ["https://www.tiktok.com/v2/auth/authorize/?x=1"]
+    assert asked == [("틱톡 설정 (3/3)", False)]
+    assert result == "https://r.example/?code=c&state=s"
+
+
 def test_wait_for_redirect_polls_until_code_arrives():
-    class Page:
-        def __init__(self):
-            self.urls = iter(["https://www.tiktok.com/login", "https://r.example/?code=c&state=s"])
-            self.url = next(self.urls)
-
-        def wait_for_timeout(self, ms):
-            self.url = next(self.urls, self.url)
-
-    assert tiktok.wait_for_redirect(Page(), "https://r.example/", timeout_s=5) == "https://r.example/?code=c&state=s"
+    page = _Page(["https://www.tiktok.com/login", "https://r.example/?code=c&state=s"])
+    assert tiktok.wait_for_redirect(_Context(page), "https://r.example/", timeout_s=5) == \
+        "https://r.example/?code=c&state=s"
 
 
-def test_wait_for_redirect_times_out():
-    class Page:
-        url = "https://www.tiktok.com/login"
+def test_wait_for_redirect_follows_other_window_when_one_closes():
+    login_popup = _Page(["https://www.tiktok.com/login"], closes_after=1)  # 로그인 팝업이 닫힘
+    main = _Page(["https://www.tiktok.com/auth", "https://r.example/?code=c&state=s"])
+    ctx = _Context(main, login_popup)
+    assert tiktok.wait_for_redirect(ctx, "https://r.example/", timeout_s=5) == "https://r.example/?code=c&state=s"
 
-        def wait_for_timeout(self, ms):
-            pass
 
-    assert tiktok.wait_for_redirect(Page(), "https://r.example/", timeout_s=2) == ""
+def test_wait_for_redirect_returns_empty_when_all_windows_closed_or_timeout():
+    closed = _Page(["https://www.tiktok.com/login"], closes_after=1)
+    assert tiktok.wait_for_redirect(_Context(closed), "https://r.example/", timeout_s=5) == ""
+    stuck = _Page(["https://www.tiktok.com/login"])
+    assert tiktok.wait_for_redirect(_Context(stuck), "https://r.example/", timeout_s=2) == ""
 
 
 def test_exchange_code_posts_form():
