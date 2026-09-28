@@ -52,7 +52,7 @@ class FakePublisher:
         return PublishResult(self.platform, True, url=f"https://{self.platform}/1")
 
 
-def fake_video(slides, out_path, bgm_path=None, total_seconds=15.0):
+def fake_video(slides, out_path, bgm_path=None, total_seconds=15.0, footer_text=""):
     fake_video.calls.append((list(slides), bgm_path, total_seconds))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(b"mp4")
@@ -68,7 +68,7 @@ def fast_templates(monkeypatch):
         path.write_bytes(jpeg_bytes())
         return path
 
-    for name in ("generate_header", "generate_footer", "generate_bgm"):
+    for name in ("generate_header", "generate_footer", "generate_bgm", "default_bgm"):
         monkeypatch.setattr(templates, name, fake)
     fake_video.calls = []
 
@@ -262,7 +262,7 @@ def test_no_comparison_without_after_photos_and_video_caps_per_stage(tmp_path):
     assert run_post(cfg, RunOptions(), _services(drive, FakeWebClient(), blogger=blogger)) == 0
     assert "전후 비교" not in blogger.calls[0][1]
     slides = fake_video.calls[0][0]
-    assert len(slides) == 3 + 1  # 영상은 단계별 최대 3장 + 푸터
+    assert len(slides) == 2 + 1  # 영상은 단계별 최대 2장 + 푸터
 
 
 def test_video_failure_only_fails_tiktok(world):

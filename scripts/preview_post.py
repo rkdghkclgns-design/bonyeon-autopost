@@ -79,7 +79,7 @@ def main() -> int:
     media = PostMedia(washed, _make_comparison(washed, out / "photos"), reviews)
     header = templates.generate_header(out / "assets" / "header.png", cfg.company_name)
     footer = templates.generate_footer(out / "assets" / "footer.png", cfg.company_name, cfg.company_phone)
-    bgm = templates.generate_bgm(out / "assets" / "bgm.mp3")
+    bgm = templates.default_bgm(out / "assets" / "bgm.mp3")
 
     print("AI 원고 생성 중...")
     generator = ContentGenerator(

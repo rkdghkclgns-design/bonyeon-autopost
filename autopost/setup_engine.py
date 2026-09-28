@@ -129,7 +129,7 @@ def ensure_layout(
             )
             _ensure_template(
                 drive, bgm_id, BGM_FILE, f"{BGM_FOLDER}/{BGM_FILE}",
-                templates.generate_bgm, workdir, created_files,
+                templates.default_bgm, workdir, created_files,
             )
             _ensure_template(
                 drive, root_id, GUIDE_FILE, GUIDE_FILE,

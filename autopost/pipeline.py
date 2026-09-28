@@ -13,7 +13,7 @@ from . import blog_publisher, naver_publisher, tiktok_publisher
 from .ai_helper import ContentGenerator, PostContent
 from .blog_publisher import BloggerPublisher, build_blog_html, build_labels
 from .config import Config, platform_readiness
-from .before_after import make_comparison, make_contact_sheet
+from .before_after import make_comparison, make_contact_sheet, make_vertical_comparison
 from .preview_page import write_preview
 from .progress import ProgressReporter
 from .step_summary import build_failure_summary, build_step_summary, write_step_summary
@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
 UNSAFE_CHARS = re.compile(r'[\\/:*?"<>|\s]+')
-VIDEO_PHOTOS_PER_STAGE = 3  # 15초 영상이 너무 빨라지지 않도록 단계별 최대 3장
+VIDEO_PHOTOS_PER_STAGE = 2  # 15초에 사진이 너무 빨리 넘어가지 않도록 단계별 최대 2장 (한 장 약 1.8초)
 
 
 @dataclass(frozen=True)
@@ -81,6 +81,8 @@ class PostMedia:
     photos: Mapping[str, tuple[Path, ...]]  # 세탁된 사진 (단계별)
     comparison: Path | None = None  # 전후 비교 이미지
     reviews: tuple[Path, ...] = ()  # 실제 고객후기 캡처 (메타데이터 제거본)
+    # 영상용 원본 고해상도 사진 (영상 프레임에는 사진 메타데이터가 남지 않음). 비면 photos 사용
+    video_photos: Mapping[str, tuple[Path, ...]] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -151,16 +153,20 @@ def _make_comparison(washed: Mapping[str, Sequence[Path]], workdir: Path) -> Pat
         return None
 
 
-def _build_slides(company: str, media: PostMedia, footer_path: Path | None) -> list[Slide]:
+def _build_slides(
+    company: str, media: PostMedia, footer_path: Path | None, comparison: Path | None = None
+) -> list[Slide]:
+    source = media.video_photos or media.photos  # 영상은 원본 고해상도 사진으로
+    comparison = comparison or media.comparison
     slides = [
         Slide(path, f"{company} | {STAGE_LABELS[stage]}")
         for stage in STAGES
-        for path in media.photos.get(stage, ())[:VIDEO_PHOTOS_PER_STAGE]
+        for path in source.get(stage, ())[:VIDEO_PHOTOS_PER_STAGE]
     ]
-    if media.comparison is not None:
-        slides.append(Slide(media.comparison, f"{company} | 작업 전 · 후"))
+    if comparison is not None:
+        slides.append(Slide(comparison, f"{company} | 작업 전 · 후", motion="fit"))
     if footer_path is not None:
-        slides.append(Slide(footer_path))
+        slides.append(Slide(footer_path, motion="still"))
     return slides
 
 
@@ -217,16 +223,30 @@ def _safely(platform: str, action: Callable[[], PublishResult]) -> PublishResult
         return PublishResult.fail(platform, exc)
 
 
+def _video_comparison(media: PostMedia, workdir: Path) -> Path | None:
+    """세로 영상용 위(작업 전)/아래(작업 후) 비교 이미지 — 블로그용 가로 비교는 세로 화면에서 너무 작아진다."""
+    source = media.video_photos or media.photos
+    before, after = source.get(STAGE_BEFORE, ()), source.get(STAGE_AFTER, ())
+    if not before or not after:
+        return None
+    try:
+        return make_vertical_comparison(before[0], after[0], workdir / "compare_vertical.jpg")
+    except Exception:
+        log.exception("영상용 전후 비교 이미지 생성 실패 — 블로그용 비교 이미지로 대신")
+        return None
+
+
 def _make_video(
     services: Services, cfg: Config, media: PostMedia, assets: CommonAssets, workdir: Path
 ) -> tuple[Path | None, str]:
     """영상 실패는 틱톡만의 실패로 처리해 블로그 발행은 계속 진행한다."""
     try:
         path = services.video_maker(
-            _build_slides(cfg.company_name, media, assets.footer_path),
+            _build_slides(cfg.company_name, media, assets.footer_path, _video_comparison(media, workdir)),
             workdir / "tiktok.mp4",
             bgm_path=assets.bgm_path,
             total_seconds=cfg.video_seconds,
+            footer_text=f"{cfg.company_name} · {cfg.company_phone}",
         )
         return path, ""
     except Exception as exc:
@@ -446,7 +466,8 @@ def _run_steps(
     assets = _download_assets(services.drive, layout, workdir)
     review_files = _select_reviews(services.drive, layout, cfg.reviews_per_post)
     media = PostMedia(
-        washed, _make_comparison(washed, workdir), _download_reviews(services, review_files, workdir)
+        washed, _make_comparison(washed, workdir), _download_reviews(services, review_files, workdir),
+        video_photos=originals,
     )
     reporter.file(make_contact_sheet(washed, workdir / "selected.jpg"), "선택된 사진", "📸 이번 글에 쓰는 사진",
                   stage="prepare")

@@ -55,6 +55,25 @@ def make_contact_sheet(
     return out_path
 
 
+def make_vertical_comparison(
+    before: Path, after: Path, out_path: Path, size: tuple[int, int] = (1080, 1460), gap: int = 16
+) -> Path:
+    """세로 영상용: 위 작업 전 / 아래 작업 후 (각 칸을 꽉 채우도록 잘라 크게 보여줌)."""
+    panel = (size[0], (size[1] - gap) // 2)
+    canvas = Image.new("RGB", size, "white")
+    for index, (path, text) in enumerate(((before, "작업 전"), (after, "작업 후"))):
+        with Image.open(path) as opened:
+            photo = ImageOps.fit(ImageOps.exif_transpose(opened).convert("RGB"), panel, Image.Resampling.LANCZOS)
+        top = index * (panel[1] + gap)
+        canvas.paste(photo, (0, top))
+        region = canvas.crop((0, top, panel[0], top + panel[1]))
+        _label(region, 0, text)
+        canvas.paste(region, (0, top))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out_path, "JPEG", quality=92)
+    return out_path
+
+
 def make_comparison(before: Path, after: Path, out_path: Path, height: int = PANEL_HEIGHT) -> Path:
     left, right = _panel(before, height), _panel(after, height)
     total = left.width + GAP + right.width

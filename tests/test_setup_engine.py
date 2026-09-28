@@ -22,7 +22,7 @@ def fast_templates(monkeypatch):
         path.write_bytes(b"template")
         return path
 
-    for name in ("generate_header", "generate_footer", "generate_bgm"):
+    for name in ("generate_header", "generate_footer", "generate_bgm", "default_bgm"):
         monkeypatch.setattr(templates, name, fake)
 
 

@@ -111,6 +111,21 @@ def _write_wav(path: Path, samples: np.ndarray) -> None:
         wav.writeframes(samples.tobytes())
 
 
+DEFAULT_BGM = Path(__file__).resolve().parent / "data" / "bgm_default.mp3"
+# 기본 배경음악: "Sunglasses" — Loyalty Freak Music (CC0 1.0 퍼블릭 도메인, 상업 이용·출처 표기 불필요)
+# https://commons.wikimedia.org/wiki/File:Loyalty_Freak_Music_-_01_-_Sunglasses.ogg  (앞 40초, 음량 -14 LUFS)
+DEFAULT_BGM_CREDIT = "Sunglasses — Loyalty Freak Music (CC0)"
+
+
+def default_bgm(path: Path) -> Path:
+    """기본 배경음악(무료 CC0 음원)을 복사한다. 음원 파일이 없으면 합성 음원으로 대신한다."""
+    if DEFAULT_BGM.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(DEFAULT_BGM.read_bytes())
+        return path
+    return generate_bgm(path)
+
+
 def generate_bgm(path: Path, seconds: float = 30.0) -> Path:
     """합성 음원을 mp3로 저장 (moviepy에 포함된 ffmpeg 바이너리 사용)."""
     path.parent.mkdir(parents=True, exist_ok=True)

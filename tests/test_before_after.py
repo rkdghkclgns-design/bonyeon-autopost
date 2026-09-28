@@ -1,7 +1,17 @@
 from PIL import Image
 
-from autopost.before_after import GAP, MAX_WIDTH, make_comparison, make_contact_sheet
+from autopost.before_after import GAP, MAX_WIDTH, make_comparison, make_contact_sheet, make_vertical_comparison
 from fakes import make_jpeg
+
+
+def test_vertical_comparison_stacks_before_over_after(tmp_path):
+    before = make_jpeg(tmp_path / "b.jpg", size=(4000, 1800), color=(120, 90, 60))
+    after = make_jpeg(tmp_path / "a.jpg", size=(4000, 1800), color=(235, 235, 235))
+    out = make_vertical_comparison(before, after, tmp_path / "v.jpg", size=(1080, 1460), gap=16)
+    with Image.open(out) as image:
+        assert image.size == (1080, 1460)
+        top, bottom = image.getpixel((540, 600)), image.getpixel((540, 1300))
+        assert sum(top) < sum(bottom)  # 위 = 작업 전(어두움), 아래 = 작업 후(밝음)
 
 
 def test_contact_sheet_has_one_row_per_stage(tmp_path):

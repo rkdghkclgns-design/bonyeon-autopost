@@ -56,7 +56,7 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
 | 슬랙 명령어 `/포스팅`, `/초기세팅` | 기본 `/posting`, `/posting-setup` | 슬랙이 한글 명령어를 허용하는지 불확실. Worker 는 한글 이름도 인식하므로 등록되면 그대로 사용 가능 |
 | 네이버 블로그 자동 발행 | Playwright 로 에디터 조작 **+ 실패 시 슬랙으로 수동 발행용 초안** | 네이버는 글쓰기 API 가 없음. 화면 구조가 바뀌면 깨질 수 있어 안전장치 추가 |
 | 틱톡 업로드 | 공식 Content Posting API | 틱톡 앱 **심사(audit) 전에는 '나만 보기'로만 게시** 가능. 심사 통과 후 전체 공개 |
-| 기본 BGM | 코드로 직접 합성한 음원 | 저작권 걱정 없는 확실한 무료 음원. 드라이브에서 파일만 교체하면 됨 |
+| 기본 BGM | 무료 CC0 음원 "Sunglasses" (Loyalty Freak Music) | 퍼블릭 도메인이라 상업 이용·출처 표기 불필요. 드라이브 `00_공통_BGM/bgm.mp3` 만 교체하면 바뀜 |
 | (추가) | `98_블로그_게시이미지` 폴더 | Blogger 는 이미지를 직접 호스팅하지 않아 드라이브 공개 링크로 게시 |
 | (추가) | dry-run(테스트) 모드 | 발행 없이 원고·영상을 슬랙으로 미리보기 |
 
@@ -69,12 +69,12 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
 ├─ setup.py                 초기 세팅 실행 (python setup.py) ※ 패키징용 setup.py 아님
 ├─ autopost/
 │  ├─ setup_engine.py       Zero-Touch 드라이브 폴더/템플릿 자동 생성 (멱등)
-│  ├─ templates.py          기본 헤더·푸터 이미지, BGM 합성
+│  ├─ templates.py          기본 헤더·푸터 이미지, 기본 BGM(CC0 음원, data/bgm_default.mp3)
 │  ├─ drive_helper.py       Google Drive API
 │  ├─ photo_selector.py     카테고리·사진 선택
 │  ├─ image_wash.py         EXIF(GPS) 제거, 1~2% 크롭, 미세 색감 조정, HEIC 지원
 │  ├─ ai_helper.py          Gemini Vision 원고·해시태그 15개·틱톡 캡션
-│  ├─ video_maker.py        MoviePy 9:16 슬라이드쇼 (페이드 + BGM + 단계 라벨)
+│  ├─ video_maker.py        9:16 고화질 영상 (원본 사진 · 패닝/확대 · 크로스페이드 · CRF18)
 │  ├─ blog_publisher.py     구글 블로그 (Blogger API v3)
 │  ├─ naver_publisher.py    네이버 블로그 (Playwright)
 │  ├─ tiktok_publisher.py   틱톡 (Content Posting API)
@@ -98,7 +98,7 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
 청소업체_포스팅자동화/
 ├─ 00_공통_헤더이미지/header_로고.png   (기본 로고 자동 생성 → 교체 가능)
 ├─ 00_공통_푸터이미지/footer_안내.png   (연락처 안내 자동 생성 → 교체 가능)
-├─ 00_공통_BGM/bgm.mp3                 (합성 BGM 자동 생성 → 교체 가능)
+├─ 00_공통_BGM/bgm.mp3                 (무료 CC0 음원 자동 생성 → 교체 가능)
 ├─ 01_정기청소/ 작업전 · 작업중 · 작업후
 ├─ 02_로프청소/ 작업전 · 작업중 · 작업후
 ├─ 03_방역소독/ 작업전 · 작업중 · 작업후
