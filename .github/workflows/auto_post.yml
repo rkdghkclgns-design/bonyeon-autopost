@@ -1,0 +1,111 @@
+name: 청소 자동 포스팅
+
+on:
+  schedule:
+    # 평일 10:17 (KST) = UTC 01:17. 정각은 GitHub 부하로 지연이 잦아 17분으로 설정
+    - cron: "17 1 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "실행 모드"
+        type: choice
+        options: [post, setup]
+        default: post
+      category:
+        description: "카테고리 (비우면 사진이 가장 많은 카테고리: 정기청소 / 로프청소 / 방역소독)"
+        type: string
+        default: ""
+      location:
+        description: "실제 현장 위치 (예: 고잔동, 안산 중앙동). 비우면 서비스 지역 동을 순환"
+        type: string
+        default: ""
+      dry_run:
+        description: "테스트 실행 (발행·사진이동 없이 슬랙으로 미리보기)"
+        type: boolean
+        default: false
+  repository_dispatch:
+    # slack_relay(Cloudflare Worker)가 슬랙 슬래시 커맨드를 받아 호출
+    types: [slack-post, slack-setup]
+
+concurrency:
+  group: auto-post
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # 일반 설정 (Settings > Secrets and variables > Actions > Variables)
+      COMPANY_NAME: ${{ vars.COMPANY_NAME }}
+      COMPANY_PHONE: ${{ vars.COMPANY_PHONE }}
+      SERVICE_AREA: ${{ vars.SERVICE_AREA }}
+      DRIVE_ROOT_FOLDER_NAME: ${{ vars.DRIVE_ROOT_FOLDER_NAME }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      GEMINI_FALLBACK_MODELS: ${{ vars.GEMINI_FALLBACK_MODELS }}
+      NAVER_PUBLISH_MODE: ${{ vars.NAVER_PUBLISH_MODE }}
+      TIKTOK_MODE: ${{ vars.TIKTOK_MODE }}
+      TIKTOK_PRIVACY_LEVEL: ${{ vars.TIKTOK_PRIVACY_LEVEL }}
+      PHOTOS_PER_STAGE: ${{ vars.PHOTOS_PER_STAGE }}
+      REVIEWS_PER_POST: ${{ vars.REVIEWS_PER_POST }}
+      MIN_PHOTOS: ${{ vars.MIN_PHOTOS }}
+      VIDEO_SECONDS: ${{ vars.VIDEO_SECONDS }}
+      OUTPUT_DIR: output
+      # 시크릿 (Settings > Secrets and variables > Actions > Secrets)
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+      NAVER_BLOG_ID: ${{ secrets.NAVER_BLOG_ID }}
+      NAVER_STORAGE_STATE_B64: ${{ secrets.NAVER_STORAGE_STATE_B64 }}
+      TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+      TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+      TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+      # (선택) 갱신된 네이버 세션/틱톡 토큰을 시크릿에 자동 저장할 PAT (Secrets: Read and write)
+      GH_SECRETS_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
+      HAS_NAVER: ${{ secrets.NAVER_STORAGE_STATE_B64 != '' && secrets.NAVER_BLOG_ID != '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 한글 폰트 설치
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-nanum
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: 네이버용 브라우저 설치
+        if: env.HAS_NAVER == 'true'
+        run: python -m playwright install --with-deps chromium
+
+      - name: 자동화 실행
+        env:
+          # 외부 입력(client_payload)은 run 스크립트에 직접 넣지 않고 환경변수로만 전달 (스크립트 인젝션 방지)
+          AUTOPOST_MODE: ${{ (github.event_name == 'repository_dispatch' && github.event.action == 'slack-setup') && 'setup' || inputs.mode || 'post' }}
+          AUTOPOST_CATEGORY: ${{ github.event.client_payload.category || inputs.category || '' }}
+          AUTOPOST_LOCATION: ${{ inputs.location || '' }}
+          AUTOPOST_DRY_RUN: ${{ inputs.dry_run || github.event.client_payload.dry_run || false }}
+          AUTOPOST_TRIGGER: ${{ github.event_name }}
+          AUTOPOST_REQUESTED_BY: ${{ github.event.client_payload.requested_by || github.actor }}
+        run: python main.py
+
+      - name: 결과물 보관 (영상·원고·오류 스크린샷, 7일)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autopost-output-${{ github.run_id }}
+          path: output/
+          retention-days: 7
+          if-no-files-found: ignore

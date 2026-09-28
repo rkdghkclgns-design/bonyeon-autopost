@@ -1,0 +1,21 @@
+# Google (Drive / Blogger / OAuth)
+google-api-python-client>=2.150
+google-auth>=2.35
+google-auth-oauthlib>=1.2
+
+# AI
+google-genai>=1.0
+
+# Slack
+slack_sdk>=3.33
+
+# 이미지 / 영상
+Pillow>=10.4
+pillow-heif>=0.18
+numpy>=1.26
+moviepy>=2.1,<3
+
+# 기타
+requests>=2.32
+playwright>=1.48
+python-dotenv>=1.0

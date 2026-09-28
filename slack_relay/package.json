@@ -1,0 +1,9 @@
+{
+  "name": "cleaning-autopost-slack-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "deploy": "npx wrangler deploy"
+  }
+}

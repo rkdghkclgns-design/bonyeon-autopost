@@ -1,0 +1,400 @@
+"""Gemini Vision으로 블로그 원고·해시태그 15개·틱톡 캡션 생성.
+
+원고 양식은 네이버 청소업체 '현장 기록' 글의 공통 구조를 따른다:
+인사 + 현장 소개 → 단계별 인용구 소제목 → 사진마다 1~3줄 설명(글·사진 교차)
+→ 전후 비교 → 맺음말 + 상담 안내. 업체가 직접 쓰는 1인칭이며, 고객 후기처럼 쓰지 않는다.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+import textwrap
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Mapping, Sequence
+
+from .constants import CATEGORY_DESCRIPTIONS, STAGE_LABELS, STAGES
+from .regions import AreaPick
+
+log = logging.getLogger(__name__)
+
+HASHTAG_COUNT = 15
+MAX_HASHTAG_LEN = 30
+MIN_CHARS_BASE = 400  # 본문 최소 분량 = 기본 + 사진당 가산 (공백 제외)
+MIN_CHARS_PER_PHOTO = 60
+MOBILE_LINE = 24  # 네이버 모바일 글처럼 한 줄 24자 안팎
+MOBILE_SLACK = 6  # 문장이 30자 이하면 한 줄로 둔다
+SENTENCE_END = re.compile(r"([.!?…~)]|[.!?][\"'”’]|[다요죠])$")  # 줄 끝이 문장 끝인지
+STANDALONE_LINE = re.compile(r"[:：]|\d{2,4}-\d{3,4}-\d{4}$")  # '문의: 010-…' 처럼 홀로 쓰는 줄
+TIKTOK_CAPTION_MAX = 2000
+GENERIC_TAGS = (
+    "청소업체", "청소전문", "청소현장", "전후비교", "깨끗한공간",
+    "청소대행", "상가청소", "건물관리", "청소서비스", "위생관리",
+    "청소꿀팁", "공간관리", "전문청소", "청소견적", "청결",
+)
+
+
+class ContentGenerationError(RuntimeError):
+    """AI 원고 생성 실패."""
+
+
+@dataclass(frozen=True)
+class Section:
+    stage: str
+    heading: str
+    body: str
+    captions: tuple[str, ...] = ()
+
+    def caption_for(self, index: int) -> str:
+        return self.captions[index] if index < len(self.captions) else ""
+
+
+@dataclass(frozen=True)
+class PostContent:
+    title: str
+    intro: str
+    sections: tuple[Section, ...]
+    outro: str
+    hashtags: tuple[str, ...]
+    tiktok_caption: str
+    tips: str = ""
+    keyword: str = ""  # 대표 검색어 (예: '안산 단원구 정기청소') — TIP 소제목 등에 사용
+
+    def section_for(self, stage: str) -> Section | None:
+        return next((s for s in self.sections if s.stage == stage), None)
+
+    def plain_text(self) -> str:
+        """네이버 수동 발행/슬랙 초안용 일반 텍스트 (사진 위치는 [사진 N] 으로 표시)."""
+        parts = [self.title, "", self.intro, ""]
+        for section in self.sections:
+            parts.extend([f"■ {section.heading}", section.body, ""])
+            for index, caption in enumerate(section.captions, start=1):
+                parts.extend([f"[{STAGE_LABELS[section.stage]} 사진 {index}]", caption, ""])
+        if self.tips:
+            parts.extend([f"■ {self.keyword + ' ' if self.keyword else ''}관리 TIP", self.tips, ""])
+        parts.extend([self.outro, "", " ".join(self.hashtags)])
+        return "\n".join(parts).strip()
+
+    def text_length(self) -> int:
+        """본문 글자 수 (공백·해시태그 제외) — 분량 점검용."""
+        texts = [self.intro, self.tips, self.outro]
+        for section in self.sections:
+            texts.extend([section.heading, section.body, *section.captions])
+        return sum(len(re.sub(r"\s", "", t)) for t in texts)
+
+
+def min_body_chars(photo_counts: Mapping[str, int]) -> int:
+    """사진 수에 비례한 본문 최소 글자 수 (공백 제외)."""
+    return MIN_CHARS_BASE + MIN_CHARS_PER_PHOTO * sum(photo_counts.values())
+
+
+def area_rules(area: AreaPick | None, category: str, company: str) -> tuple[str, str]:
+    """(제목 예시, 지역 규칙) — 실제 현장 위치와 '서비스 지역 키워드'를 구분해 거짓 위치를 쓰지 않게 한다."""
+    if area is None:
+        return f"[{category}] ○○ 현장, ○○까지 깔끔하게", "지역명은 쓰지 않습니다."
+    if area.is_site:
+        place = area.dong or area.region
+        wide = area.region or place
+        return (
+            f"[{place} {category}] ○○ 현장, ○○까지 깔끔하게",
+            f"이번 현장은 실제로 '{area.label}'에 있습니다. title·intro 에 '{place} {category}' 를 자연스럽게 넣되 "
+            f"더 구체적인 주소·건물명은 쓰지 않습니다. outro 에 '{wide} 전 지역 출장·상담 가능' 한 줄을 넣습니다.",
+        )
+    return (
+        f"○○ 현장, ○○까지 깔끔하게 | {area.region} {category} {company}",
+        f"서비스 지역 키워드는 '{area.region}'(대표 동: {area.dong}) 입니다. 이번 현장의 실제 위치는 알 수 없으므로 "
+        f"현장이 {area.dong or area.region}에 있었다고 쓰지 마세요. title 은 위 예시처럼 끝에 "
+        f"'| {area.region} {category} {company}' 를 붙이고, intro 에는 지역명을 쓰지 않으며, "
+        f"outro 에 '{area.dong} 등 {area.region} 전 지역 출장·상담 가능' 한 줄을 넣습니다.",
+    )
+
+
+def normalize_hashtags(
+    tags: Sequence[str],
+    category: str,
+    company: str,
+    count: int = HASHTAG_COUNT,
+    priority: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """'#' 접두사 통일, 공백/특수문자 제거, 중복 제거 후 정확히 count개로 맞춘다 (priority 를 맨 앞에)."""
+    seen: set[str] = set()
+    result: list[str] = []
+    fallback = (category, company.replace(" ", ""), *GENERIC_TAGS)
+    for raw in (*priority, *tags, *fallback):
+        cleaned = re.sub(r"[^0-9A-Za-z가-힣_]", "", str(raw))[:MAX_HASHTAG_LEN]
+        key = cleaned.lower()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        result.append(f"#{cleaned}")
+        if len(result) == count:
+            break
+    return tuple(result)
+
+
+def _strip_code_fence(text: str) -> str:
+    match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    return match.group(1) if match else text
+
+
+def _text(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ContentGenerationError(f"AI 응답의 '{field}' 필드가 비어 있습니다")
+    return value.strip()
+
+
+def _balanced_wrap(sentence: str, width: int) -> list[str]:
+    """줄 길이가 고르게 되도록 끊는다 (마지막 줄에 한두 단어만 남는 것 방지)."""
+    if len(sentence) <= width + MOBILE_SLACK:
+        return [sentence]
+    parts = -(-len(sentence) // width)  # 올림
+    target = -(-len(sentence) // parts) + 2
+    return textwrap.wrap(sentence, width=target, break_long_words=False, break_on_hyphens=False)
+
+
+def split_sentences(text: str) -> list[str]:
+    """AI 가 문장 중간에서 끊은 줄은 다시 잇고, 문장 단위로 나눈다 (빈 줄·'문의:' 같은 줄은 경계)."""
+    sentences: list[str] = []
+    buffer: list[str] = []
+
+    def flush() -> None:
+        if buffer:
+            joined = " ".join(buffer)
+            sentences.extend(s for s in re.split(r"(?<=[.!?])\s+", joined) if s)
+            buffer.clear()
+
+    for raw_line in text.replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line:
+            flush()
+            continue
+        buffer.append(line)
+        if SENTENCE_END.search(line) or STANDALONE_LINE.search(line):
+            flush()
+    flush()
+    return sentences
+
+
+def wrap_mobile(text: str, width: int = MOBILE_LINE) -> str:
+    """문장마다 빈 줄로 띄우고(덩어리 방지), 긴 문장은 고른 길이의 짧은 줄로 끊는다."""
+    return "\n\n".join("\n".join(_balanced_wrap(s, width)) for s in split_sentences(text))
+
+
+def _clean_tips(value: object) -> str:
+    """AI 가 TIP 본문 첫 줄에 소제목('○○ 관리 TIP')을 다시 쓰면 제거 (소제목은 따로 붙임)."""
+    if not isinstance(value, str):
+        return ""
+    lines = value.strip().split("\n")
+    if lines and "TIP" in lines[0].upper() and len(lines[0]) <= 30:
+        lines = lines[1:]
+    return wrap_mobile("\n".join(lines).strip())
+
+
+def _captions(value: object, count: int | None) -> tuple[str, ...]:
+    """사진 설명 목록을 정리하고, 사진 수가 주어지면 개수를 정확히 맞춘다 (부족분은 빈 설명)."""
+    items = [wrap_mobile(str(v).strip()) for v in value] if isinstance(value, list) else []
+    if count is None:
+        return tuple(items)
+    return tuple((items + [""] * count)[:count])
+
+
+def parse_content(
+    raw: str,
+    category: str,
+    company: str,
+    stages_present: Sequence[str] = STAGES,
+    photo_counts: Mapping[str, int] | None = None,
+    area: AreaPick | None = None,
+) -> PostContent:
+    try:
+        data = json.loads(_strip_code_fence(raw))
+    except json.JSONDecodeError as exc:
+        raise ContentGenerationError(f"AI 응답이 JSON 형식이 아닙니다: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ContentGenerationError("AI 응답 최상위가 객체가 아닙니다")
+
+    raw_sections = data.get("sections") or []
+    by_stage = {
+        item.get("stage"): item for item in raw_sections if isinstance(item, dict)
+    }
+    sections = tuple(
+        Section(
+            stage=stage,
+            heading=_text(by_stage[stage].get("heading"), f"sections.{stage}.heading"),
+            body=wrap_mobile(_text(by_stage[stage].get("body"), f"sections.{stage}.body")),
+            captions=_captions(
+                by_stage[stage].get("photo_captions"),
+                photo_counts.get(stage, 0) if photo_counts is not None else None,
+            ),
+        )
+        for stage in STAGES
+        if stage in stages_present and stage in by_stage
+    )
+    if not sections:
+        raise ContentGenerationError("AI 응답에 사용 가능한 본문 섹션이 없습니다")
+
+    raw_tags = data.get("hashtags") or []
+    raw_tips = data.get("tips")
+    caption = _text(data.get("tiktok_caption"), "tiktok_caption")[:TIKTOK_CAPTION_MAX]
+    return PostContent(
+        title=_text(data.get("title"), "title")[:120],
+        intro=wrap_mobile(_text(data.get("intro"), "intro")),
+        sections=sections,
+        outro=wrap_mobile(_text(data.get("outro"), "outro")),
+        hashtags=normalize_hashtags(
+            raw_tags if isinstance(raw_tags, list) else [], category, company,
+            priority=area.hashtags(category) if area else (),
+        ),
+        tiktok_caption=caption,
+        tips=_clean_tips(raw_tips),
+        keyword=area_keyword(area, category),
+    )
+
+
+def area_keyword(area: AreaPick | None, category: str) -> str:
+    if area is None:
+        return ""
+    place = (area.dong or area.region) if area.is_site else area.region
+    return f"{place} {category}".strip()
+
+
+def build_prompt(
+    company: str,
+    phone: str,
+    category: str,
+    photo_counts: Mapping[str, int],
+    area: AreaPick | None = None,
+) -> str:
+    present = [s for s in STAGES if photo_counts.get(s)]
+    stage_plan = ", ".join(f"{s} 사진 {photo_counts[s]}장" for s in present)
+    specialty = CATEGORY_DESCRIPTIONS.get(category, category)
+    title_example, area_rule = area_rules(area, category, company)
+    return f"""당신은 청소 전문업체 '{company}'의 블로그 담당자이며, 업체가 직접 쓰는 '현장 기록' 글을 작성합니다.
+위 사진들은 '{category}' 현장에서 찍은 것이고, 각 사진 앞에 [단계 사진 번호] 표시가 있습니다.
+
+[글 구성]
+1. title: 검색 키워드가 들어간 제목. 예) "{title_example}" (50자 이내)
+2. intro: "안녕하세요! {specialty} 전문 {company}입니다." 로 시작해, 오늘 현장이 어떤 곳이고
+   어떤 상태였는지, 이런 오염을 방치하면 어떤 문제가 생기는지까지 4~6줄로 소개합니다.
+3. sections: 단계마다
+   - heading: 인용구로 들어갈 짧은 소제목. 궁금증을 주는 문장 (예: "작업 전, 이 정도였어요")
+   - body: 이 단계를 여는 2~3줄 (이 단계에서 무엇을 왜 하는지)
+   - photo_captions: 그 단계 사진 수와 정확히 같은 개수. 사진마다 그 사진에 실제로 보이는 것을 2~4줄로 설명합니다.
+     (오염 상태, 작업 방법·장비, 그 공정을 하는 이유, 달라진 점). 설명끼리 표현이 겹치지 않게 씁니다.
+     '첫 번째 사진은', '사진 1', '촬영한 사진으로' 같은 사진 번호·촬영 언급 없이 장면 자체를 바로 설명합니다.
+4. tips: '{category} 관리 TIP' 문단 4~6줄. 이런 현장을 오래 깨끗하게 유지하는 일반적인 관리 요령과
+   전문 청소 권장 주기를 알려줍니다. (이 현장에 대한 새로운 사실을 지어내지 말고 일반 상식 수준으로)
+5. outro: 전후 차이를 한 줄로 정리 → "이상 {category} 현장이었습니다" 식의 맺음 →
+   "현장 사진을 보내주시면 상담·견적 도와드립니다" 안내 → 전화 {phone}
+
+[문체]
+- 업체 1인칭의 친근하고 믿음직한 말투 (~입니다 / ~했어요 혼용). 느낌표·이모티콘(:) 등)은 글 전체에 3~5개만.
+- 모바일에서 읽기 좋게 한 줄을 25자 안팎에서 줄바꿈합니다 (줄바꿈은 \\n).
+- 고객 후기처럼 쓰지 않고, 고객의 말이나 평가를 지어내지 않습니다.
+- 분량: 본문 전체(공백 제외 모든 텍스트 합) 1,400~2,600자. 짧게 끝내지 말고 공정의 이유와 차이를 충분히 설명합니다.
+
+[사실 규칙]
+- 사진에서 확인되는 것만 씁니다. 가격·시간·약품명·면적 등은 사진에 명확히 보이지 않으면 쓰지 않습니다.
+- '친환경·무독성·살균 99%' 처럼 사진으로 확인할 수 없는 성분·효능 표현은 쓰지 않습니다.
+- {area_rule}
+- 사진에 다른 업체의 상호·전화번호·간판 글자가 보여도 언급하지 않습니다. 연락처는 {phone} 만 씁니다.
+- 최고·유일·100% 같은 과장 표현, 타 업체 비방은 금지합니다.
+
+[출력] 아래 JSON 객체 하나만 출력하세요 (설명·코드블록 금지).
+{{
+  "title": "...",
+  "intro": "...",
+  "sections": [
+    {{"stage": "작업전|작업중|작업후", "heading": "...", "body": "...", "photo_captions": ["사진1 설명", "..."]}}
+  ],
+  "tips": "...",
+  "outro": "...",
+  "hashtags": ["해시태그 15개, # 없이, 띄어쓰기 없이. '{category}' 관련 검색어 위주"],
+  "tiktok_caption": "틱톡 캡션 (150자 이내, 이모지 1~3개, 해시태그 5개 포함)"
+}}
+sections 는 이 순서와 사진 수로만 작성하세요: {stage_plan}
+"""
+
+
+class ContentGenerator:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        company: str,
+        phone: str,
+        client=None,
+        max_attempts: int = 3,
+        sleep: Callable[[float], None] = time.sleep,
+        fallback_models: Sequence[str] = (),
+    ) -> None:
+        if client is None:
+            from google import genai
+
+            client = genai.Client(api_key=api_key)
+        self._client = client
+        self._models = tuple(dict.fromkeys((model, *fallback_models)))  # 순서 유지 중복 제거
+        self._company = company
+        self._phone = phone
+        self._max_attempts = max_attempts
+        self._sleep = sleep
+
+    def _build_contents(
+        self, category: str, images_by_stage: Mapping[str, Sequence[Path]], area: AreaPick | None
+    ) -> list:
+        from google.genai import types
+
+        contents: list = []
+        for stage in STAGES:
+            for index, path in enumerate(images_by_stage.get(stage, ()), start=1):
+                contents.append(f"[{STAGE_LABELS[stage]} 사진 {index}]")
+                contents.append(types.Part.from_bytes(data=path.read_bytes(), mime_type="image/jpeg"))
+        counts = {s: len(images_by_stage.get(s, ())) for s in STAGES}
+        contents.append(build_prompt(self._company, self._phone, category, counts, area))
+        return contents
+
+    def generate(
+        self, category: str, images_by_stage: Mapping[str, Sequence[Path]], area: AreaPick | None = None
+    ) -> PostContent:
+        from google.genai import types
+
+        counts = {s: len(images_by_stage.get(s, ())) for s in STAGES}
+        present = [s for s in STAGES if counts[s]]
+        contents = self._build_contents(category, images_by_stage, area)
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.8)
+        min_chars = min_body_chars(counts)
+
+        # 한 라운드에 모든 모델을 순서대로 시도 → 전부 실패하면 대기 후 다음 라운드.
+        # 분량이 최소치에 못 미치면 1회만 '더 자세히' 재요청하고, 그래도 짧으면 가장 긴 결과를 쓴다.
+        last_error: Exception | None = None
+        shortest_ok: PostContent | None = None
+        total = self._max_attempts * len(self._models)
+        for attempt in range(1, self._max_attempts + 1):
+            for model in self._models:
+                try:
+                    response = self._client.models.generate_content(
+                        model=model, contents=contents, config=config
+                    )
+                    content = parse_content(response.text or "", category, self._company, present, counts, area)
+                except Exception as exc:  # 과부하/모델중단/네트워크/파싱 오류 모두 다음 후보로
+                    last_error = exc
+                    log.warning("AI 원고 생성 실패 [%s] (라운드 %d/%d): %s", model, attempt, self._max_attempts, exc)
+                    continue
+                length = content.text_length()
+                if length >= min_chars:
+                    return content
+                if shortest_ok is not None:  # 이미 한 번 늘려 달라고 했음
+                    return content if length > shortest_ok.text_length() else shortest_ok
+                log.warning("AI 원고가 짧아 재요청합니다 (%d자 < 최소 %d자)", length, min_chars)
+                shortest_ok = content
+                contents = [*contents[:-1], contents[-1] + (
+                    f"\n※ 직전 답변의 본문이 공백 제외 {length}자로 너무 짧았습니다. "
+                    f"공백 제외 {min_chars}자 이상이 되도록 사진 설명, 공정 이유, 관리 TIP 을 더 자세히 쓰세요."
+                )]
+            if attempt < self._max_attempts:
+                self._sleep(2 ** attempt)
+        if shortest_ok is not None:
+            return shortest_ok
+        raise ContentGenerationError(f"AI 원고 생성에 {total}회 실패했습니다: {last_error}")
