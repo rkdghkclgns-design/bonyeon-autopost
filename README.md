@@ -162,8 +162,9 @@ https://aistudio.google.com/apikey 에서 키 발급 → Secret `GEMINI_API_KEY`
 python -m playwright install chromium
 python scripts/export_naver_cookies.py
 ```
-열린 창에서 **직접** 로그인 → Enter → 생성된 `naver_state.b64` 내용을 Secret `NAVER_STORAGE_STATE_B64` 에 등록 후 파일 삭제.
-Secret `NAVER_BLOG_ID` 에는 블로그 주소 `blog.naver.com/아이디` 의 아이디를 넣습니다.
+열린 창에서 **직접** 로그인('로그인 상태 유지' 체크)만 하면 로그인을 자동 감지하고, 블로그 아이디를 찾아
+`NAVER_BLOG_ID`·`NAVER_STORAGE_STATE_B64` 를 `.env` 와 GitHub Secrets(gh CLI)에 바로 저장합니다 (값은 화면에 출력하지 않음).
+블로그 아이디를 못 찾으면 `--blog-id 아이디` 를 붙여 다시 실행하세요.
 - 네이버 `내정보 → 보안설정 → 해외 로그인 차단`이 켜져 있으면 GitHub(해외 서버)에서 막힐 수 있습니다.
 - 처음에는 Variable `NAVER_PUBLISH_MODE=draft` 로 **임시저장**만 해서 결과를 확인한 뒤 `publish` 로 바꾸는 것을 권장합니다.
 

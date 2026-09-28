@@ -6,10 +6,12 @@ import pytest
 
 from autopost.ai_helper import parse_content
 from autopost.naver_publisher import (
+    MAX_SECRET_CHARS,
     NaverError,
     NaverPublisher,
     build_blocks,
     decode_storage_state,
+    encode_storage_state,
     extract_post_url,
 )
 from fakes import ai_json
@@ -77,6 +79,34 @@ def test_decode_storage_state_roundtrip_and_error():
     assert decode_storage_state(encoded) == state
     with pytest.raises(NaverError):
         decode_storage_state("!!!not-base64!!!")
+
+
+def test_encode_storage_state_keeps_only_naver_data():
+    state = {
+        "cookies": [
+            {"name": "NID_AUT", "value": "a", "domain": ".naver.com"},
+            {"name": "blog", "value": "b", "domain": "blog.naver.com"},
+            {"name": "ad", "value": "c", "domain": ".doubleclick.net"},
+            {"name": "trick", "value": "d", "domain": "naver.com.evil.io"},
+        ],
+        "origins": [
+            {"origin": "https://blog.naver.com", "localStorage": [{"name": "k", "value": "v"}]},
+            {"origin": "https://tracker.example", "localStorage": []},
+        ],
+    }
+    decoded = decode_storage_state(encode_storage_state(state))
+    assert [c["name"] for c in decoded["cookies"]] == ["NID_AUT", "blog"]
+    assert [o["origin"] for o in decoded["origins"]] == ["https://blog.naver.com"]
+
+
+def test_encode_storage_state_drops_origins_when_too_large_for_secret():
+    state = {
+        "cookies": [{"name": "NID_SES", "value": "s", "domain": ".naver.com"}],
+        "origins": [{"origin": "https://blog.naver.com", "localStorage": [{"name": "big", "value": "x" * 60_000}]}],
+    }
+    encoded = encode_storage_state(state)
+    assert len(encoded) <= MAX_SECRET_CHARS
+    assert decode_storage_state(encoded) == {"cookies": state["cookies"], "origins": []}
 
 
 def test_publisher_defers_decoding_until_publish(tmp_path):

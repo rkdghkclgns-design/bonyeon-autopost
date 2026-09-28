@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
+from urllib.parse import urlparse
 
 from .ai_helper import PostContent
 from .blog_publisher import tips_heading
@@ -113,6 +114,32 @@ def extract_post_url(blog_id: str, urls: Sequence[str]) -> str:
         if match:
             return f"https://blog.naver.com/{blog_id}/{match.group(1)}"
     return ""
+
+
+NAVER_DOMAIN = "naver.com"
+MAX_SECRET_CHARS = 45_000  # GitHub 시크릿 한도(48KB) 여유
+
+
+def _host_allowed(host: str, extra_hosts: Sequence[str]) -> bool:
+    host = host.lstrip(".").lower()
+    return host == NAVER_DOMAIN or host.endswith("." + NAVER_DOMAIN) or host in extra_hosts
+
+
+def encode_storage_state(state: dict, extra_hosts: Sequence[str] = ()) -> str:
+    """로그인 세션을 시크릿에 넣을 base64 문자열로 — 네이버(+글쓰기 주소) 쿠키·저장소만 남겨 크기를 줄인다."""
+    cookies = [c for c in state.get("cookies", []) if _host_allowed(str(c.get("domain", "")), extra_hosts)]
+    origins = [
+        o for o in state.get("origins", [])
+        if _host_allowed(urlparse(str(o.get("origin", ""))).hostname or "", extra_hosts)
+    ]
+
+    def encode(compact: dict) -> str:
+        return base64.b64encode(json.dumps(compact, ensure_ascii=False).encode("utf-8")).decode("ascii")
+
+    encoded = encode({"cookies": cookies, "origins": origins})
+    if len(encoded) > MAX_SECRET_CHARS:  # 로그인은 쿠키만으로 유지되므로 저장소 데이터는 버린다
+        encoded = encode({"cookies": cookies, "origins": []})
+    return encoded
 
 
 def decode_storage_state(encoded: str) -> dict:
@@ -261,8 +288,8 @@ class NaverPublisher:
         if self._on_session_updated is None:
             return
         try:
-            encoded = base64.b64encode(json.dumps(context.storage_state()).encode("utf-8")).decode("ascii")
-            self._on_session_updated(encoded)
+            write_host = urlparse(self._write_url).hostname or ""
+            self._on_session_updated(encode_storage_state(context.storage_state(), extra_hosts=(write_host,)))
         except Exception as exc:
             log.warning("네이버 세션 저장 실패 (다음 실행에는 영향 없음): %s", exc)
 

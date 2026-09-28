@@ -6,25 +6,88 @@
 
 1. 크롬 창이 열리면 네이버에 '직접' 로그인하세요 ('로그인 상태 유지' 체크 권장).
    (보안문자·2단계 인증도 직접 처리합니다. 이 스크립트는 비밀번호를 다루지 않습니다)
-2. 로그인이 끝나면 터미널로 돌아와 Enter.
-3. 생성된 naver_state.b64 파일 내용 전체를 GitHub 시크릿 NAVER_STORAGE_STATE_B64 에 붙여넣고,
-   파일은 삭제하세요. (이 파일이 있으면 누구나 내 네이버 계정으로 로그인할 수 있습니다)
+2. 로그인이 끝나면 자동으로 감지합니다 (최대 10분 대기, Enter 불필요).
+3. 블로그 아이디를 자동으로 찾아 NAVER_BLOG_ID / NAVER_STORAGE_STATE_B64 를
+   .env 와 GitHub 시크릿(gh CLI)에 바로 저장합니다. 값은 화면에 출력하지 않습니다.
+   (세션 값이 있으면 누구나 내 네이버 계정으로 로그인할 수 있으니 공유하지 마세요)
 
 주의: 네이버 '해외 로그인 차단'이 켜져 있으면 GitHub Actions(해외 서버)에서 세션이 막힐 수 있습니다.
 """
 from __future__ import annotations
 
-import base64
-import json
+import argparse
+import re
+import subprocess
 import sys
 from pathlib import Path
+from typing import Callable, Mapping
+from urllib.parse import parse_qs, urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from autopost.envfile import update_env_file  # noqa: E402
+from autopost.naver_publisher import encode_storage_state  # noqa: E402
 
 LOGIN_URL = "https://nid.naver.com/nidlogin.login"
+MY_BLOG_URL = "https://blog.naver.com/MyBlog.naver"  # 로그인 상태면 내 블로그 주소로 이동
 REQUIRED_COOKIES = {"NID_AUT", "NID_SES"}
-OUTPUT = Path("naver_state.b64")
+BLOG_ID_RE = re.compile(r"^[A-Za-z0-9_-]{3,30}$")
+BLOG_HOSTS = {"blog.naver.com", "m.blog.naver.com"}
+NOT_BLOG_IDS = {"prologue", "section", "gonaverblog"}
 
 
-def main() -> int:
+def blog_id_from_url(url: str) -> str | None:
+    """blog.naver.com/<아이디> 또는 ...?blogId=<아이디> 에서 블로그 아이디를 꺼낸다."""
+    parsed = urlparse(url)
+    if (parsed.hostname or "") not in BLOG_HOSTS:
+        return None
+    candidate = parse_qs(parsed.query).get("blogId", [""])[0]
+    if not candidate:
+        segment = parsed.path.strip("/").split("/")[0]
+        candidate = "" if "." in segment else segment  # MyBlog.naver 같은 페이지 이름 제외
+    if BLOG_ID_RE.match(candidate) and candidate.lower() not in NOT_BLOG_IDS:
+        return candidate
+    return None
+
+
+def upload_secrets(
+    values: Mapping[str, str], run: Callable[..., subprocess.CompletedProcess] = subprocess.run
+) -> list[str]:
+    """gh CLI 로 GitHub 시크릿 등록 (값은 표준입력으로만 전달). 실패한 이름 목록을 돌려준다."""
+    failed = []
+    for name, value in values.items():
+        try:
+            result = run(["gh", "secret", "set", name], input=value, text=True, capture_output=True)
+        except FileNotFoundError:
+            return list(values)
+        if result.returncode != 0:
+            failed.append(name)
+    return failed
+
+
+def ask_blog_id() -> str:
+    while True:
+        typed = input("블로그 주소 blog.naver.com/ 뒤의 아이디를 입력하세요: ").strip()
+        if BLOG_ID_RE.match(typed):
+            return typed
+        print("  영문·숫자·_·- 3~30자로 입력해주세요.")
+
+
+def has_login_cookies(cookies) -> bool:
+    return REQUIRED_COOKIES <= {cookie.get("name") for cookie in cookies}
+
+
+def wait_for_login(context, page, timeout_s: float, poll_ms: int = 2000) -> bool:
+    """사용자가 창에서 로그인을 마칠 때까지(로그인 쿠키가 생길 때까지) 기다린다."""
+    for _ in range(max(1, int(timeout_s * 1000 / poll_ms))):
+        if has_login_cookies(context.cookies()):
+            page.wait_for_timeout(3000)  # 로그인 직후 이동이 끝나도록 잠시 대기
+            return True
+        page.wait_for_timeout(poll_ms)
+    return False
+
+
+def capture_session(timeout_s: float) -> tuple[dict, str | None]:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
@@ -32,19 +95,55 @@ def main() -> int:
         context = browser.new_context(locale="ko-KR")
         page = context.new_page()
         page.goto(LOGIN_URL)
-        input("\n브라우저에서 네이버 로그인을 마친 뒤 이 창에서 Enter 를 누르세요... ")
+        print(f"\n열린 창에서 네이버에 로그인하세요 ('로그인 상태 유지' 체크). 최대 {int(timeout_s // 60)}분 기다립니다...")
+        if not wait_for_login(context, page, timeout_s):
+            browser.close()
+            return {"cookies": []}, None
+        blog_id = None
+        try:
+            page.goto(MY_BLOG_URL, wait_until="domcontentloaded", timeout=20_000)
+            page.wait_for_timeout(1500)
+            blog_id = blog_id_from_url(page.url)
+        except Exception as exc:  # 블로그 확인 실패는 직접 입력으로 대체
+            print(f"  (블로그 주소 자동 확인 실패: {exc.__class__.__name__})")
         state = context.storage_state()
         browser.close()
+    return state, blog_id
 
-    names = {cookie["name"] for cookie in state.get("cookies", [])}
-    missing = REQUIRED_COOKIES - names
-    if missing:
-        print(f"❌ 로그인 쿠키({', '.join(sorted(missing))})가 없습니다. 로그인이 완료되었는지 확인 후 다시 실행하세요.")
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="네이버 로그인 세션 저장")
+    parser.add_argument("--env", default=".env", help="값을 저장할 .env 경로 (기본: .env)")
+    parser.add_argument("--no-upload", action="store_true", help="GitHub 시크릿 등록을 건너뜀")
+    parser.add_argument("--blog-id", default="", help="블로그 아이디를 직접 지정 (자동 확인 실패 시)")
+    parser.add_argument("--timeout", type=float, default=600, help="로그인 대기 시간(초), 기본 10분")
+    args = parser.parse_args()
+
+    state, found_id = capture_session(args.timeout)
+    if not has_login_cookies(state.get("cookies", [])):
+        print("❌ 로그인이 확인되지 않았습니다 (시간 초과 또는 창을 닫음). 다시 실행하세요.")
         return 1
 
-    OUTPUT.write_text(base64.b64encode(json.dumps(state).encode("utf-8")).decode("ascii"), encoding="ascii")
-    print(f"\n✅ 저장 완료: {OUTPUT.resolve()}")
-    print("   → 파일 내용 전체를 GitHub 시크릿 NAVER_STORAGE_STATE_B64 에 등록한 뒤 파일을 삭제하세요.")
+    blog_id = args.blog_id or found_id
+    if blog_id:
+        print(f"✅ 블로그 아이디 확인: {blog_id}")
+    elif sys.stdin.isatty():
+        blog_id = ask_blog_id()
+    else:
+        print("❌ 블로그 아이디를 찾지 못했습니다. --blog-id 아이디 를 붙여 다시 실행하세요.")
+        return 1
+
+    values = {"NAVER_BLOG_ID": blog_id, "NAVER_STORAGE_STATE_B64": encode_storage_state(state)}
+    update_env_file(Path(args.env), values)
+    print(f"✅ {args.env} 에 저장: {', '.join(values)}")
+
+    if args.no_upload:
+        return 0
+    failed = upload_secrets(values)
+    if failed:
+        print(f"⚠️ GitHub 시크릿 등록 실패: {', '.join(failed)} — gh CLI 로그인(gh auth status)을 확인하세요.")
+        return 1
+    print("✅ GitHub 시크릿 등록 완료: " + ", ".join(values))
     return 0
 
 
