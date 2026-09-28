@@ -1,6 +1,6 @@
 # 슬랙 앱 생성용 매니페스트
 # https://api.slack.com/apps → Create New App → From an app manifest → 워크스페이스 선택 → 아래 내용 붙여넣기
-# ※ 두 곳의 url 을 배포한 Cloudflare Worker 주소로 바꾸세요 (예: https://cleaning-autopost-slack-relay.<계정>.workers.dev/)
+# ※ url 은 배포한 Cloudflare Worker 주소 (본연클린 운영 주소로 설정됨. 다른 계정에 배포하면 바꾸세요)
 display_information:
   name: 청소 자동화
   description: 구글·네이버 블로그와 틱톡 자동 포스팅을 슬랙에서 제어합니다
@@ -11,12 +11,12 @@ features:
     always_online: true
   slash_commands:
     - command: /posting
-      url: https://YOUR-WORKER.workers.dev/
+      url: https://cleaning-autopost-slack-relay.cleaning-autopost-slack-relay.workers.dev/
       description: 블로그·틱톡 자동 포스팅 실행
       usage_hint: "[정기청소|로프청소|방역소독] [현장 동] [테스트]  ·  도움말"
       should_escape: false
     - command: /posting-setup
-      url: https://YOUR-WORKER.workers.dev/
+      url: https://cleaning-autopost-slack-relay.cleaning-autopost-slack-relay.workers.dev/
       description: 구글 드라이브 폴더·템플릿 초기 세팅 점검
       should_escape: false
 oauth_config:
