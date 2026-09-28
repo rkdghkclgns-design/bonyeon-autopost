@@ -391,8 +391,8 @@ def _thread_fallbacks(reporter: ProgressReporter, results: Sequence[PublishResul
 
 
 def area_turn(now: datetime) -> int:
-    """하루 두 번(오전·오후) 실행해도 지역 키워드가 겹치지 않도록 반나절마다 1씩 증가."""
-    return now.toordinal() * 2 + (1 if now.hour >= 12 else 0)
+    """지역 키워드 순번 — 하루 1회 발행이므로 날짜마다 1씩 증가 (항목·시군구·동을 빠짐없이 순환)."""
+    return now.toordinal()
 
 
 def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
@@ -417,7 +417,7 @@ def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
         return 0
 
     now = services.now()
-    # 실제 현장 위치가 주어지면 그 위치, 아니면 서비스 지역(시·구·동)을 오전·오후 실행마다 순환
+    # 실제 현장 위치가 주어지면 그 위치, 아니면 서비스 지역(시·구·동)을 날짜마다 순환
     area = site_area(options.location) or pick_area(cfg.service_areas, area_turn(now))
     if area is not None and area.is_site and selection.reused:
         # 이전 사진을 다시 조합한 글은 그 위치의 현장이 아니므로 위치는 서비스 지역 키워드로만 쓴다

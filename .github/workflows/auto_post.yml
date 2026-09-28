@@ -9,9 +9,8 @@ run-name: >-
 
 on:
   schedule:
-    # 매일 07:00 · 17:00 (KST) = UTC 22:00(전날) · 08:00. GitHub 부하로 수~수십 분 늦게 시작될 수 있음
-    - cron: "0 22 * * *"
-    - cron: "0 8 * * *"
+    # 매일 10:00 (KST) = UTC 01:00, 하루 1회. GitHub 부하로 수~수십 분 늦게 시작될 수 있음
+    - cron: "0 1 * * *"
   workflow_dispatch:
     inputs:
       mode:

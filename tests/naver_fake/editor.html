@@ -19,6 +19,12 @@
   </div>
 
   <button class="se-image-toolbar-button" id="imgBtn">사진</button>
+  <button class="se-property-toolbar-drop-down-button se-align-left-toolbar-button"
+          data-name="align-drop-down-with-justify" id="alignDrop">정렬</button>
+  <div class="layer" id="alignLayer">
+    <button class="se-toolbar-option-icon-button se-toolbar-option-align-center-button"
+            data-name="align-drop-down-with-justify" data-value="center" id="alignCenter">가운데 정렬</button>
+  </div>
   <input type="file" id="file" accept="image/*" style="display:none">
   <button class="publish_btn__m9KHH" id="publish">발행</button>
   <button class="save_btn__bzc5B" id="save">저장</button>
@@ -51,6 +57,11 @@
       }, 300);
     };
     document.getElementById('publish').onclick = () => document.getElementById('layer').classList.add('open');
+    document.getElementById('alignDrop').onclick = () => document.getElementById('alignLayer').classList.add('open');
+    document.getElementById('alignCenter').onclick = () => {
+      body.dataset.align = 'center';
+      document.getElementById('alignLayer').classList.remove('open');
+    };
     document.getElementById('tag').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { tags.push(e.target.value); e.target.value = ''; e.preventDefault(); }
     });
@@ -61,6 +72,7 @@
         body: body.innerText,
         tags: tags,
         images: images,
+        align: body.dataset.align || 'left',
       });
     }
     document.getElementById('confirm').onclick = () => {

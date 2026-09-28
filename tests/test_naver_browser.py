@@ -79,6 +79,7 @@ def test_publish_flow(server, tmp_path):
     assert "작업후 첫 사진 설명" in summary["body"]
     assert "상담은 000-0000-0000" in summary["body"]
     assert summary["tags"] == [tag.lstrip("#") for tag in content.hashtags]
+    assert summary["align"] == "center"  # '정렬' 드롭다운 → '가운데 정렬'
 
 
 def test_draft_mode_saves_without_publishing(server, tmp_path):

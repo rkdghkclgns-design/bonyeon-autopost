@@ -324,10 +324,10 @@ def test_second_run_reuses_photos_as_work_case_without_comparison(world):
     assert _post_counts(drive, photos) == {2}
 
 
-def test_area_turn_changes_between_morning_and_evening_runs():
-    morning = datetime(2026, 9, 29, 7, 0, tzinfo=KST)
-    assert area_turn(morning.replace(hour=17)) == area_turn(morning) + 1
-    assert area_turn(morning.replace(day=30)) == area_turn(morning) + 2
+def test_area_turn_advances_one_step_per_day():
+    today = datetime(2026, 9, 29, 10, 0, tzinfo=KST)
+    assert area_turn(today.replace(hour=23)) == area_turn(today)
+    assert area_turn(today.replace(day=30)) == area_turn(today) + 1
 
 
 def test_dry_run_publishes_nothing_but_sends_preview(world):

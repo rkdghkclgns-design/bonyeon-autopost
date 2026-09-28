@@ -51,8 +51,9 @@ class NaverSelectors:
     tag_input: str = "input[class*='tag_input']"
     confirm_publish: str = "button[class*='confirm_btn']"
     save_button: str = "button[class*='save_btn']"
-    # 정렬 버튼 (에디터 개편으로 없으면 Ctrl+E 로 대신) — 실제 글쓰기 화면에서 확인 후 조정
-    align_center: str = "button[data-name='align-center'], button[class*='align-center']"
+    # 정렬: 툴바의 '정렬' 드롭다운을 연 뒤 '가운데 정렬' 옵션 (2026-09 실제 글쓰기 화면에서 확인)
+    align_dropdown: str = "button.se-property-toolbar-drop-down-button[data-name^='align']"
+    align_center: str = "button.se-toolbar-option-align-center-button"
 
 
 @dataclass(frozen=True)
@@ -242,13 +243,10 @@ class NaverPublisher:
                     log.debug("팝업 닫기 무시: %s", exc)
 
     def _align_center(self, page, editor) -> None:
-        """본문 가운데 정렬 — 정렬 버튼이 있으면 누르고, 없으면 단축키(Ctrl+E)로 시도."""
+        """본문 가운데 정렬 — '정렬' 드롭다운을 열고 '가운데 정렬'을 누른다 (이후 입력하는 문단에 이어짐)."""
         try:
-            button = editor.locator(self._sel.align_center)
-            if button.count():
-                button.first.click(timeout=3000)
-            else:
-                page.keyboard.press("Control+e")
+            editor.locator(self._sel.align_dropdown).first.click(timeout=3000)
+            editor.locator(self._sel.align_center).first.click(timeout=3000)
         except Exception as exc:  # 정렬 실패는 발행을 막지 않는다
             log.warning("가운데 정렬 설정 실패 (왼쪽 정렬로 진행): %s", exc)
 
