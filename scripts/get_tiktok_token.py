@@ -85,9 +85,9 @@ def tk_prompt(title: str, message: str, secret: bool) -> str:
 def resolve_credentials(existing: Mapping[str, str], prompt: Prompt = tk_prompt) -> tuple[str, str]:
     """.env/환경변수에 있으면 그 값을, 없으면 입력 창으로 묻는다."""
     key = existing.get("TIKTOK_CLIENT_KEY", "").strip() or prompt(
-        "틱톡 설정 (1/2)", "틱톡 개발자 앱의 Client Key 를 붙여넣으세요", False)
+        "틱톡 설정 (1/2)", "틱톡 개발자 앱의 Client Key 를 붙여넣으세요", False).strip()
     secret = existing.get("TIKTOK_CLIENT_SECRET", "").strip() or prompt(
-        "틱톡 설정 (2/2)", "틱톡 개발자 앱의 Client Secret 을 붙여넣으세요 (화면에 * 로 표시)", True)
+        "틱톡 설정 (2/2)", "틱톡 개발자 앱의 Client Secret 을 붙여넣으세요 (화면에 * 로 표시)", True).strip()
     if not key or not secret:
         raise ValueError("Client Key / Client Secret 이 입력되지 않았습니다.")
     return key, secret
