@@ -79,6 +79,7 @@ def build_services(cfg: Config, slack: SlackNotifier, mode: str) -> Services:
             mode=cfg.tiktok_mode,
             privacy_level=cfg.tiktok_privacy_level,
             on_token_rotated=lambda value: update_github_secret("TIKTOK_REFRESH_TOKEN", value),
+            on_refresh_expiry=lambda value: update_github_secret("TIKTOK_REFRESH_EXPIRES_AT", value),
         )
         if cfg.tiktok_enabled else None
     )

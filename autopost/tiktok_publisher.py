@@ -43,6 +43,7 @@ class TikTokError(RuntimeError):
 class TikTokToken:
     access_token: str
     refresh_token: str
+    refresh_expires_in: int = 0  # refresh token 남은 유효기간(초) — 만료 알림용
 
 
 def _check(response: requests.Response, action: str) -> dict:
@@ -105,6 +106,7 @@ class TikTokPublisher:
         session: requests.Session | None = None,
         sleep: Callable[[float], None] = time.sleep,
         on_token_rotated: Callable[[str], bool] | None = None,
+        on_refresh_expiry: Callable[[str], bool] | None = None,
     ) -> None:
         self._client_key = client_key
         self._client_secret = client_secret
@@ -114,6 +116,7 @@ class TikTokPublisher:
         self._http = session or requests.Session()
         self._sleep = sleep
         self._on_token_rotated = on_token_rotated
+        self._on_refresh_expiry = on_refresh_expiry
 
     def _handle_rotation(self, token: TikTokToken) -> str:
         """refresh token 이 바뀌면 업로드 전에 즉시 저장(콜백)하고 안내 문구를 반환."""
@@ -158,7 +161,22 @@ class TikTokPublisher:
         payload = _check(response, "토큰 갱신")
         if "access_token" not in payload:
             raise TikTokError("토큰 갱신 응답에 access_token 이 없습니다")
-        return TikTokToken(payload["access_token"], payload.get("refresh_token", self._refresh_token))
+        try:
+            expires_in = int(payload.get("refresh_expires_in") or 0)
+        except (TypeError, ValueError):
+            expires_in = 0
+        return TikTokToken(payload["access_token"], payload.get("refresh_token", self._refresh_token), expires_in)
+
+    def _save_expiry(self, token: TikTokToken) -> None:
+        """refresh token 만료일을 저장 (토큰 만료 알림용). 실패해도 업로드는 계속."""
+        if not (self._on_refresh_expiry and token.refresh_expires_in > 0):
+            return
+        from .token_expiry import expiry_from_seconds
+
+        try:
+            self._on_refresh_expiry(expiry_from_seconds(token.refresh_expires_in))
+        except Exception:
+            log.exception("틱톡 토큰 만료일 저장 실패")
 
     def _post_json(self, url: str, token: str, body: dict, action: str) -> dict:
         response = self._send(
@@ -186,6 +204,7 @@ class TikTokPublisher:
     def publish(self, video_path: Path, caption: str) -> PublishResult:
         token = self.refresh()
         rotation_note = self._handle_rotation(token)
+        self._save_expiry(token)
         if rotation_note:
             log.warning(rotation_note)
         size = video_path.stat().st_size

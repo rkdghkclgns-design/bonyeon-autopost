@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from autopost.envfile import update_env_file  # noqa: E402
 from autopost.local_secrets import save_everywhere  # noqa: E402
 from autopost.setup_browser import launch_visible_browser, tk_prompt  # noqa: E402
+from autopost.token_expiry import expiry_from_seconds  # noqa: E402
 
 AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
@@ -203,6 +204,8 @@ def main() -> int:
         "TIKTOK_CLIENT_SECRET": client_secret,
         "TIKTOK_REFRESH_TOKEN": payload["refresh_token"],
     }
+    if int(payload.get("refresh_expires_in", 0) or 0) > 0:  # 만료 알림용 만료일
+        values["TIKTOK_REFRESH_EXPIRES_AT"] = expiry_from_seconds(payload["refresh_expires_in"])
     failed = save_everywhere(values, env_path, upload=not args.no_upload)
     days = int(payload.get("refresh_expires_in", 0)) // 86400
     print(f"✅ {args.env} 에 저장: {', '.join(values)}")

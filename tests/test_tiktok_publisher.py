@@ -86,6 +86,19 @@ def test_token_rotation_saved_before_upload(video):
     assert saved == ["new-rt"]  # 업로드가 실패해도 새 토큰은 이미 저장됨
 
 
+def test_refresh_token_expiry_is_saved_for_alerts(video):
+    expiries = []
+    routes = _routes([{"status": "PUBLISH_COMPLETE"}])
+    routes[tt.TOKEN_URL] = [FakeResponse(payload={
+        "access_token": "at", "refresh_token": "rt", "refresh_expires_in": 86400 * 300})]
+    publisher = tt.TikTokPublisher(
+        "k", "s", "rt", session=FakeSession(routes), sleep=lambda _: None,
+        on_refresh_expiry=lambda value: expiries.append(value) or True,
+    )
+    assert publisher.publish(video, "c").ok
+    assert len(expiries) == 1 and len(expiries[0]) == 10  # YYYY-MM-DD
+
+
 def test_rotation_note_when_not_saved(video):
     session = FakeSession(_routes([{"status": "PUBLISH_COMPLETE"}], refresh_token="new-rt"))
     result = tt.TikTokPublisher("k", "s", "rt", session=session, sleep=lambda _: None).publish(video, "c")

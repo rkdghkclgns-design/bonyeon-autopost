@@ -25,6 +25,7 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
 | #autopost-2-원고 | AI 원고 파일 · 제목 · 해시태그 | `SLACK_CHANNEL_DRAFT` |
 | #autopost-3-영상 | 틱톡 영상 · 캡션 | `SLACK_CHANNEL_VIDEO` |
 | #autopost-4-발행결과 | 발행 결과 링크 · 실패 시 수동 발행용 원고 | `SLACK_CHANNEL_PUBLISH` |
+| #autopost-로그인토큰-만료알림 | 네이버 로그인·틱톡 토큰 만료 3일 전부터 알림 | `SLACK_CHANNEL_TOKEN_ALERT` |
 
 단계별 채널 ID 를 비워두면 그 단계 결과물은 진행 메시지 스레드에 올라갑니다. 새 채널을 쓰려면 채널에 봇(@autopost)을 초대하세요.
 
@@ -222,6 +223,22 @@ Secret `GH_SECRETS_TOKEN` 으로 등록하면 갱신값을 자동으로 시크�
 - 네이버/틱톡이 실패하면 진행 메시지 스레드에 **수동 발행용 원고와 영상**이 올라옵니다.
 - 결과물(사진·원고·영상)은 슬랙 진행 스레드에 올라가고, 실행이 실패했을 때만 오류 진단 자료(스크린샷 등)가 Actions 의 Artifacts 에 3일간 보관됩니다.
 - 스케줄 변경: `.github/workflows/auto_post.yml` 의 `cron` (UTC 기준, KST-9시간)
+
+### 로그인 토큰 만료 알림
+
+Actions **'로그인 토큰 만료 점검'** 이 매일 09:00(KST)에 만료일을 확인해, 만료 **3일 전부터** `#autopost-로그인토큰-만료알림` 에 보고합니다.
+
+```
+🔑 로그인 토큰 만료 알림 — 네이버 3일 이내 만료
+• 네이버: 2026-10-29 (3일 남음)
+• 틱톡: 2027-09-28 (364일 남음)
+```
+
+- 네이버: 저장된 로그인 정보(`NAVER_STORAGE_STATE_B64`)의 로그인 쿠키 만료일. 발행할 때마다 갱신된 로그인 정보가
+  자동 저장(`GH_SECRETS_TOKEN` 필요)되므로 만료일이 뒤로 밀릴 수 있습니다.
+- 틱톡: 토큰 발급·갱신 때 받은 refresh token 만료일(`TIKTOK_REFRESH_EXPIRES_AT`, 시크릿에 자동 저장).
+- 확인용으로 지금 바로 보내려면 Actions → '로그인 토큰 만료 점검' → Run workflow → `force` 체크.
+- 갱신: 네이버 `python scripts/export_naver_cookies.py` · 틱톡 `python scripts/get_tiktok_token.py`
 
 ## 포스팅 양식
 
