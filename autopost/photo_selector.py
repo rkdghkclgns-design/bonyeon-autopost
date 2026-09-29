@@ -110,6 +110,15 @@ def _pool(drive: DriveHelper, layout: DriveLayout, category: str, rng: random.Ra
     }))
 
 
+def last_posted_at(drive: DriveHelper, layout: DriveLayout) -> str:
+    """모든 카테고리 사진 중 가장 최근 사용 기록 (ISO, 없으면 빈 문자열) — 하루 1회 발행 확인용."""
+    return max(
+        (f.last_posted for folders in layout.stage_folders.values() for folder_id in folders.values()
+         for f in drive.list_images(folder_id)),
+        default="",
+    )
+
+
 def select_photos(
     drive: DriveHelper,
     layout: DriveLayout,

@@ -2,6 +2,10 @@ name = "cleaning-autopost-slack-relay"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
+# 매일 10:00 (KST) = UTC 01:00 정기 포스팅 — GitHub 정기 실행보다 정확하게 시작됨
+[triggers]
+crons = ["0 1 * * *"]
+
 [vars]
 # 깃허브아이디/리포지토리명
 GITHUB_REPO = "rkdghkclgns-design/bonyeon-autopost"

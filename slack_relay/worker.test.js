@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
-import worker, { buildInputs, dispatchUrl, parseText, sign, verifySlackSignature } from "./worker.js";
+import worker, { buildInputs, cronInputs, dispatchUrl, parseText, sign, verifySlackSignature } from "./worker.js";
 
 const SECRET = "test-signing-secret";
 const ENV = { SLACK_SIGNING_SECRET: SECRET, GITHUB_TOKEN: "ghp_x", GITHUB_REPO: "me/repo" };
@@ -143,6 +143,17 @@ test("GitHub error message is included without markup", async () => {
   const response = await worker.fetch(await slackRequest({ command: "/posting" }), ENV);
   const { text } = await response.json();
   assert.match(text, /HTTP 422 — Unexpected inputs provided: \[channel\]/);
+});
+
+test("cron trigger dispatches a scheduled post run", async () => {
+  const pending = [];
+  await worker.scheduled({ cron: "0 1 * * *" }, ENV, { waitUntil: (p) => pending.push(p) });
+  await Promise.all(pending);
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0].url, DISPATCH_URL);
+  assert.deepEqual(dispatched[0].body, { ref: "main", inputs: cronInputs() });
+  assert.equal(cronInputs().source, "cron");
+  assert.equal(cronInputs().dry_run, "false");
 });
 
 test("GET health check", async () => {

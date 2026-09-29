@@ -44,6 +44,12 @@ export const HELP_TEXT = [
 ].join("\n");
 
 export default {
+  // Cloudflare Cron Trigger (wrangler.toml [triggers]) — GitHub 정기 실행은 정각 부하로 건너뛰어질 수 있어
+  // 매일 발행은 여기서 워크플로를 직접 실행한다. 발행/미리보기 여부는 워크플로가 AUTO_PUBLISH 로 정한다.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(dispatch(env, cronInputs()));
+  },
+
   async fetch(request, env) {
     if (request.method !== "POST") {
       return new Response("ok");
@@ -111,6 +117,17 @@ export function buildInputs(mode, category, dryRun, requestedBy) {
     dry_run: dryRun && mode !== "setup" ? "true" : "false",
     source: "slack",
     requested_by: requestedBy,
+  };
+}
+
+export function cronInputs() {
+  return {
+    mode: "post",
+    category: "",
+    location: "",
+    dry_run: "false",
+    source: "cron",
+    requested_by: "정기 실행",
   };
 }
 

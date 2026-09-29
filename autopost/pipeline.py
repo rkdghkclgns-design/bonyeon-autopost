@@ -30,7 +30,7 @@ from .constants import (
 from .drive_helper import DriveFile, DriveHelper, folder_url, public_image_url
 from .image_wash import wash_all
 from .naver_publisher import NaverPublisher
-from .photo_selector import PhotoSelection, UnknownCategoryError, select_photos, usage_order
+from .photo_selector import PhotoSelection, UnknownCategoryError, last_posted_at, select_photos, usage_order
 from .regions import pick_area, site_area
 from .results import PublishResult
 from .setup_engine import DriveLayout, SetupReport, ensure_layout
@@ -347,8 +347,12 @@ class AlreadyReported(RuntimeError):
     """진행 상황 스레드에 이미 오류를 보고함 — 상위에서 중복 알림을 보내지 않는다."""
 
 
+# 정기 실행(GitHub 예비 + Cloudflare 주 실행) — 하루 1회만 발행하도록 이미 발행했으면 건너뛴다
+SCHEDULED_TRIGGERS = ("schedule", "cron")
+
 TRIGGER_LABELS = {
     "schedule": "정기 자동 실행",
+    "cron": "정기 자동 실행",
     "workflow_dispatch": "수동 실행",
     "repository_dispatch": "슬랙 명령",
     "slack": "슬랙 명령",
@@ -404,6 +408,13 @@ def run_post(cfg: Config, options: RunOptions, services: Services) -> int:
     if report.changed:
         slack.post(f"🛠️ 셀프 세팅: 누락된 항목 {len(report.created_folders) + len(report.created_files)}개를 자동 생성했습니다")
     layout = report.layout
+
+    if options.trigger in SCHEDULED_TRIGGERS and not options.dry_run:
+        today = services.now().date().isoformat()
+        if last_posted_at(services.drive, layout)[:10] == today:
+            log.info("오늘(%s) 이미 발행했습니다 — 정기 실행을 건너뜁니다", today)
+            write_step_summary(f"## ⏭️ 오늘({today}) 이미 발행해 정기 실행을 건너뜀\n하루 1회 발행 (중복 방지)")
+            return 0
 
     try:  # 2. 사진 선택
         selection = select_photos(services.drive, layout, options.category, cfg.photos_per_stage, cfg.min_photos)

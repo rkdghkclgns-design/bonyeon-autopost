@@ -324,6 +324,19 @@ def test_second_run_reuses_photos_as_work_case_without_comparison(world):
     assert _post_counts(drive, photos) == {2}
 
 
+def test_scheduled_run_posts_once_per_day_but_manual_runs_still_work(world):
+    drive, layout, photos, cfg, client = world
+    generator = FakeGenerator()
+    services = _services(drive, client, generator=generator, blogger=FakeBlogger())
+
+    assert run_post(cfg, RunOptions(trigger="cron"), services) == 0  # Cloudflare 주 실행
+    assert run_post(cfg, RunOptions(trigger="schedule"), services) == 0  # GitHub 예비 실행 → 건너뜀
+    assert len(generator.calls) == 1 and _post_counts(drive, photos) == {1}
+
+    assert run_post(cfg, RunOptions(trigger="slack"), services) == 0  # 직접 실행은 그대로
+    assert len(generator.calls) == 2
+
+
 def test_area_turn_advances_one_step_per_day():
     today = datetime(2026, 9, 29, 10, 0, tzinfo=KST)
     assert area_turn(today.replace(hour=23)) == area_turn(today)
