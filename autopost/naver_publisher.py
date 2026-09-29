@@ -191,10 +191,14 @@ class NaverPublisher:
         comparison: Path | None = None,
         reviews: Sequence[Path] = (),
     ) -> PublishResult:
+        blocks = build_blocks(content, images_by_stage, header, footer, comparison, reviews)
+        return self.publish_blocks(content.title, blocks, content.hashtags)
+
+    def publish_blocks(self, title: str, blocks: Sequence[NaverBlock], hashtags: Sequence[str]) -> PublishResult:
+        """이미 정해진 블록 순서 그대로 발행 (구글 블로그 글을 네이버에 똑같이 올릴 때 사용)."""
         from playwright.sync_api import sync_playwright
 
         state = decode_storage_state(self._storage_state_b64)
-        blocks = build_blocks(content, images_by_stage, header, footer, comparison, reviews)
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=self._headless)
             context = browser.new_context(
@@ -202,7 +206,7 @@ class NaverPublisher:
             )
             page = context.new_page()
             try:
-                url, message = self._write(page, content, blocks)
+                url, message = self._write(page, title, blocks, hashtags)
                 self._save_session(context)
                 return PublishResult(platform=PLATFORM, ok=True, url=url, message=message)
             except Exception:
@@ -213,7 +217,9 @@ class NaverPublisher:
                 browser.close()
 
     # ----- 내부 단계 -----
-    def _write(self, page, content: PostContent, blocks: Sequence[NaverBlock]) -> tuple[str, str]:
+    def _write(
+        self, page, title: str, blocks: Sequence[NaverBlock], hashtags: Sequence[str]
+    ) -> tuple[str, str]:
         page.goto(self._write_url.format(blog_id=self._blog_id), wait_until="domcontentloaded", timeout=60_000)
         page.wait_for_timeout(4000)
         if "nid.naver.com" in page.url or "nidlogin" in page.url:
@@ -229,10 +235,9 @@ class NaverPublisher:
         self._dismiss_popups(editor, page)
 
         editor.locator(self._sel.title).first.click(timeout=CLICK_TIMEOUT_MS)
-        page.keyboard.insert_text(content.title)
+        page.keyboard.insert_text(title)
         editor.locator(self._sel.body_paragraph).first.click(timeout=CLICK_TIMEOUT_MS)
         self._dismiss_popups(editor, page)
-        self._align_center(page, editor)
         for block in blocks:
             if block.kind == "image" and block.image is not None:
                 self._insert_image(page, editor, block.image)
@@ -240,7 +245,8 @@ class NaverPublisher:
                 self._type_heading(page, block.text)
             else:
                 self._type_text(page, block.text)
-        return self._finish(page, editor, content.hashtags)
+        self._align_center(page, editor)
+        return self._finish(page, editor, hashtags)
 
     def _dismiss_popups(self, editor, page) -> None:
         for selector in (self._sel.popup_cancel, self._sel.help_close):
@@ -253,10 +259,24 @@ class NaverPublisher:
                     log.debug("팝업 닫기 무시: %s", exc)
 
     def _align_center(self, page, editor) -> None:
-        """본문 가운데 정렬 — '정렬' 드롭다운을 열고 '가운데 정렬'을 누른다 (이후 입력하는 문단에 이어짐)."""
+        """다 쓴 뒤 본문 전체 선택 → '정렬' 드롭다운 → '가운데 정렬' (제목은 영향 없음).
+
+        드롭다운이 가끔 한 번에 안 열려서, '가운데 정렬' 옵션이 보일 때까지 최대 3번 연다.
+        """
         try:
-            editor.locator(self._sel.align_dropdown).first.click(timeout=CLICK_TIMEOUT_MS)
-            editor.locator(self._sel.align_center).first.click(timeout=CLICK_TIMEOUT_MS)
+            page.keyboard.press("Control+a")
+            page.wait_for_timeout(500)
+            option = editor.locator(self._sel.align_center).first
+            for attempt in range(1, 4):
+                editor.locator(self._sel.align_dropdown).first.click(timeout=CLICK_TIMEOUT_MS)
+                try:
+                    option.wait_for(state="visible", timeout=2000)
+                    break
+                except Exception:
+                    if attempt == 3:
+                        raise
+            option.click(timeout=CLICK_TIMEOUT_MS)
+            page.wait_for_timeout(500)
         except Exception as exc:  # 정렬 실패는 발행을 막지 않는다
             log.warning("가운데 정렬 설정 실패 (왼쪽 정렬로 진행): %s", exc)
 
@@ -292,9 +312,9 @@ class NaverPublisher:
             page.wait_for_timeout(500)
         else:
             raise NaverError(f"이미지 업로드가 완료되지 않았습니다: {path.name}")
-        page.wait_for_timeout(800)
-        editor.locator(self._sel.body_paragraph).last.click()
-        page.keyboard.press("End")
+        # 사진을 넣으면 에디터가 사진 아래에 빈 문단을 만들고 커서를 옮겨 둔다 → 클릭 없이 이어서 입력.
+        # (사진 선택 테두리 레이어가 문단 클릭을 가로채므로 클릭하지 않는다 — 실제 에디터에서 확인)
+        page.wait_for_timeout(1500)
 
     def _finish(self, page, editor, hashtags: Sequence[str]) -> tuple[str, str]:
         if self._mode == "draft":

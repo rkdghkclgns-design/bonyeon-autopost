@@ -53,6 +53,7 @@
         text.className = 'se-component se-text';
         text.innerHTML = '<div class="se-text-paragraph" contenteditable="true"></div>';
         body.appendChild(text);
+        text.firstChild.focus();  // 실제 에디터처럼 사진 아래 빈 문단으로 커서 이동
         e.target.value = '';
       }, 300);
     };
