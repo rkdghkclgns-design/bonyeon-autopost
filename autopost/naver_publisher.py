@@ -63,6 +63,10 @@ class NaverBlock:
     image: Path | None = None
 
 
+EDITOR_READY_TIMEOUT_MS = 30_000  # GitHub(해외 서버)에서는 에디터가 늦게 뜬다
+CLICK_TIMEOUT_MS = 10_000
+FILE_CHOOSER_TIMEOUT_MS = 30_000
+
 HEADING_RULE = "━━━━━━━━━━━━━━━━"  # 소제목 위·아래 줄 (구글 블로그 인용 박스와 비슷한 강조)
 
 
@@ -217,11 +221,17 @@ class NaverPublisher:
                 "네이버 로그인 세션이 만료되었습니다. scripts/export_naver_cookies.py 로 다시 저장하세요"
             )
         editor = page.frame_locator(self._sel.main_frame) if page.locator(self._sel.main_frame).count() else page
+        try:  # 에디터가 다 뜬 뒤에 뜨는 안내창('작성 중인 글', 도움말)까지 기다렸다가 닫는다
+            editor.locator(self._sel.title).first.wait_for(state="visible", timeout=EDITOR_READY_TIMEOUT_MS)
+        except Exception as exc:
+            raise NaverError(f"글쓰기 화면이 열리지 않았습니다: {type(exc).__name__}") from exc
+        page.wait_for_timeout(2000)
         self._dismiss_popups(editor, page)
 
-        editor.locator(self._sel.title).first.click()
+        editor.locator(self._sel.title).first.click(timeout=CLICK_TIMEOUT_MS)
         page.keyboard.insert_text(content.title)
-        editor.locator(self._sel.body_paragraph).first.click()
+        editor.locator(self._sel.body_paragraph).first.click(timeout=CLICK_TIMEOUT_MS)
+        self._dismiss_popups(editor, page)
         self._align_center(page, editor)
         for block in blocks:
             if block.kind == "image" and block.image is not None:
@@ -245,8 +255,8 @@ class NaverPublisher:
     def _align_center(self, page, editor) -> None:
         """본문 가운데 정렬 — '정렬' 드롭다운을 열고 '가운데 정렬'을 누른다 (이후 입력하는 문단에 이어짐)."""
         try:
-            editor.locator(self._sel.align_dropdown).first.click(timeout=3000)
-            editor.locator(self._sel.align_center).first.click(timeout=3000)
+            editor.locator(self._sel.align_dropdown).first.click(timeout=CLICK_TIMEOUT_MS)
+            editor.locator(self._sel.align_center).first.click(timeout=CLICK_TIMEOUT_MS)
         except Exception as exc:  # 정렬 실패는 발행을 막지 않는다
             log.warning("가운데 정렬 설정 실패 (왼쪽 정렬로 진행): %s", exc)
 
@@ -271,9 +281,10 @@ class NaverPublisher:
             page.keyboard.press("Enter")
 
     def _insert_image(self, page, editor, path: Path) -> None:
+        self._dismiss_popups(editor, page)  # 사진 버튼을 가리는 안내창이 뒤늦게 뜨는 경우
         before = editor.locator(self._sel.image_component).count()
-        with page.expect_file_chooser(timeout=15_000) as chooser:
-            editor.locator(self._sel.image_button).first.click()
+        with page.expect_file_chooser(timeout=FILE_CHOOSER_TIMEOUT_MS) as chooser:
+            editor.locator(self._sel.image_button).first.click(timeout=CLICK_TIMEOUT_MS)
         chooser.value.set_files(str(path))
         for _ in range(60):
             if editor.locator(self._sel.image_component).count() > before:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import random
 import re
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -393,8 +394,21 @@ def _meta_lines(category: str, area, options: RunOptions, now: datetime) -> list
     return meta
 
 
-def _thread_fallbacks(reporter: ProgressReporter, results: Sequence[PublishResult], content: PostContent) -> None:
+def _latest_naver_screenshot(output_dir: Path, since: float) -> Path | None:
+    """이번 실행에서 네이버가 남긴 오류 화면 (GitHub Artifacts 대신 슬랙으로 보여준다)."""
+    shots = [p for p in output_dir.glob("naver_*.png") if p.stat().st_mtime >= since]
+    return max(shots, key=lambda p: p.stat().st_mtime) if shots else None
+
+
+def _thread_fallbacks(
+    reporter: ProgressReporter,
+    results: Sequence[PublishResult],
+    content: PostContent,
+    naver_screenshot: Path | None = None,
+) -> None:
     failed = {r.platform for r in results if not r.ok and not r.skipped}
+    if naver_screenshot is not None:
+        reporter.file(naver_screenshot, "네이버 화면", "🖥️ 네이버 발행이 멈춘 화면 (문제 확인용)", stage="publish")
     if naver_publisher.PLATFORM in failed:
         reporter.note(f"📝 네이버 블로그 수동 발행용 초안 (원고 파일과 같음)\n\n{content.plain_text()}",
                       stage="publish")
@@ -472,6 +486,7 @@ def _run_steps(
     stamp = now.strftime("%Y%m%d_%H%M")
     workdir = cfg.output_dir / f"{stamp}_{selection.category}"
     category = selection.category
+    started = time.time()
 
     reporter.step("prepare", "run")  # 사진 다운로드·정리·전후 비교
     originals = _download_selection(services.drive, selection, workdir)
@@ -536,7 +551,7 @@ def _run_steps(
     else:
         reporter.step("usage", "skip", "발행 실패 — 기록 안 함")
 
-    _thread_fallbacks(reporter, results, content)
+    _thread_fallbacks(reporter, results, content, _latest_naver_screenshot(cfg.output_dir, started))
     blocks = build_report_blocks(category, content.title, results, outcome.recorded,
                                  options.dry_run, outcome.failed)
     reporter.note(f"🧹 [청소 자동화] {category} 포스팅 결과", blocks, stage="publish")
