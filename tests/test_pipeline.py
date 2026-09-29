@@ -337,6 +337,18 @@ def test_scheduled_run_posts_once_per_day_but_manual_runs_still_work(world):
     assert len(generator.calls) == 2
 
 
+def test_only_option_publishes_selected_platform(world):
+    drive, layout, photos, cfg, client = world
+    blogger = FakeBlogger()
+    naver = FakePublisher("네이버 블로그")
+    tiktok = FakePublisher("틱톡")
+    services = _services(drive, client, blogger=blogger, naver=naver, tiktok=tiktok)
+
+    assert run_post(cfg, RunOptions(only=("naver",)), services) == 0
+    assert blogger.calls == [] and tiktok.calls == [] and len(naver.calls) == 1
+    assert "⏭️ *구글 블로그*" in _report(client, _progress_ts(client))
+
+
 def test_area_turn_advances_one_step_per_day():
     today = datetime(2026, 9, 29, 10, 0, tzinfo=KST)
     assert area_turn(today.replace(hour=23)) == area_turn(today)

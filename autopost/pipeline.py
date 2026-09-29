@@ -53,6 +53,7 @@ class RunOptions:
     requested_by: str = ""
     location: str = ""  # 실제 현장 위치 (예: '고잔동', '안산 중앙동') — 없으면 서비스 지역 순환
     run_url: str = ""  # GitHub Actions 실행 로그 주소 (슬랙 진행 메시지에 링크)
+    only: tuple[str, ...] = ()  # 이 플랫폼만 발행 (google / naver / tiktok). 비우면 전체
 
 
 @dataclass(frozen=True)
@@ -269,22 +270,30 @@ def _publish_all(
     video: tuple[Path | None, str],
     category: str,
     stamp: str,
+    only: Sequence[str] = (),
 ) -> list[PublishResult]:
     video_path, video_error = video
     results: list[PublishResult] = []
-    if services.blogger is None:
+    excluded = "이번 실행에서 제외 (선택한 플랫폼만 발행)"
+    if only and "google" not in only:
+        results.append(PublishResult.skip(blog_publisher.PLATFORM, excluded))
+    elif services.blogger is None:
         results.append(PublishResult.skip(blog_publisher.PLATFORM, "BLOGGER_BLOG_ID 미설정"))
     else:
         results.append(_safely(blog_publisher.PLATFORM, lambda: _publish_blogger(
             services, layout, content, media, assets, category, stamp)))
 
-    if services.naver is None:
+    if only and "naver" not in only:
+        results.append(PublishResult.skip(naver_publisher.PLATFORM, excluded))
+    elif services.naver is None:
         results.append(PublishResult.skip(naver_publisher.PLATFORM, "NAVER_* 미설정"))
     else:
         results.append(_safely(naver_publisher.PLATFORM, lambda: services.naver.publish(
             content, media.photos, assets.header_path, assets.footer_path, media.comparison, media.reviews)))
 
-    if services.tiktok is None:
+    if only and "tiktok" not in only:
+        results.append(PublishResult.skip(tiktok_publisher.PLATFORM, excluded))
+    elif services.tiktok is None:
         results.append(PublishResult.skip(tiktok_publisher.PLATFORM, "TIKTOK_* 미설정"))
     elif video_path is None:
         results.append(PublishResult.fail(tiktok_publisher.PLATFORM, video_error))
@@ -511,7 +520,7 @@ def _run_steps(
     else:
         reporter.step("publish", "run")
         results = _publish_all(
-            services, layout, content, media, assets, (video_path, video_error), category, stamp
+            services, layout, content, media, assets, (video_path, video_error), category, stamp, options.only
         )
         reporter.step("publish", "done" if any(r.ok for r in results) else "fail", _results_line(results))
 

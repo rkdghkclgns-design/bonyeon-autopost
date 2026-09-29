@@ -27,6 +27,18 @@ log = logging.getLogger("autopost")
 TRUTHY = {"1", "true", "yes", "y", "on"}
 
 
+PLATFORM_KEYS = ("google", "naver", "tiktok")
+
+
+def parse_only(text: str) -> tuple[str, ...]:
+    """'naver' / 'google, naver' → ('naver',) … 모르는 이름은 오류."""
+    names = tuple(dict.fromkeys(t.strip().lower() for t in text.split(",") if t.strip()))
+    unknown = [n for n in names if n not in PLATFORM_KEYS]
+    if unknown:
+        raise SystemExit(f"--only 에 알 수 없는 플랫폼: {', '.join(unknown)} (사용 가능: {', '.join(PLATFORM_KEYS)})")
+    return names
+
+
 def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in TRUTHY
 
@@ -42,6 +54,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
                         help="실제 현장 위치 (예: 고잔동, '안산 중앙동'). --category 뒤에 붙여도 됨")
     parser.add_argument("--trigger", default=os.environ.get("AUTOPOST_TRIGGER", "manual"))
     parser.add_argument("--requested-by", default=os.environ.get("AUTOPOST_REQUESTED_BY", ""))
+    parser.add_argument("--only", default=os.environ.get("AUTOPOST_ONLY", ""),
+                        help="이 플랫폼만 발행 (쉼표 구분: google,naver,tiktok). 비우면 전체")
     return parser.parse_args(argv)
 
 
@@ -130,6 +144,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             requested_by=args.requested_by,
             location=args.location or location,
             run_url=os.environ.get("AUTOPOST_RUN_URL", ""),
+            only=parse_only(args.only),
         )
         return run_post(cfg, options, services)
     except AlreadyReported:
