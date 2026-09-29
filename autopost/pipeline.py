@@ -65,6 +65,7 @@ class Services:
     blogger: BloggerPublisher | None = None
     naver: NaverPublisher | None = None
     tiktok: TikTokPublisher | None = None
+    naver_skip_reason: str = "NAVER_* 미설정"
     washer: Callable[..., list[Path]] = wash_all
     video_maker: Callable[..., Path] = make_video
     now: Callable[[], datetime] = lambda: datetime.now(KST)
@@ -287,7 +288,7 @@ def _publish_all(
     if only and "naver" not in only:
         results.append(PublishResult.skip(naver_publisher.PLATFORM, excluded))
     elif services.naver is None:
-        results.append(PublishResult.skip(naver_publisher.PLATFORM, "NAVER_* 미설정"))
+        results.append(PublishResult.skip(naver_publisher.PLATFORM, services.naver_skip_reason))
     else:
         results.append(_safely(naver_publisher.PLATFORM, lambda: services.naver.publish(
             content, media.photos, assets.header_path, assets.footer_path, media.comparison, media.reviews)))

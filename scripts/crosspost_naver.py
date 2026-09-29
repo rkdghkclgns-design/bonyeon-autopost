@@ -12,13 +12,12 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
 
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from autopost.blogger_import import to_blocks  # noqa: E402
+from autopost.naver_crosspost import crosspost, fetch_post_by_url  # noqa: E402
 from autopost.cli import _load_dotenv  # noqa: E402
 from autopost.config import load_config  # noqa: E402
 from autopost.google_auth import build_blogger_service, build_credentials  # noqa: E402
@@ -33,12 +32,6 @@ def download(url: str, dest: Path) -> Path:
     return dest
 
 
-def fetch_post(cfg, url: str) -> tuple[str, str]:
-    service = build_blogger_service(build_credentials(cfg.google))
-    post = service.posts().getByPath(blogId=cfg.blogger_blog_id, path=urlparse(url).path).execute(num_retries=3)
-    return post["title"], post["content"]
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="구글 블로그 글을 네이버에 똑같이 올리기")
     parser.add_argument("url", help="구글 블로그 글 주소")
@@ -48,12 +41,14 @@ def main() -> int:
 
     _load_dotenv()
     cfg = load_config(dict(os.environ))
-    title, html = fetch_post(cfg, args.url)
+    post = fetch_post_by_url(build_blogger_service(build_credentials(cfg.google)), cfg.blogger_blog_id, args.url)
     workdir = Path(tempfile.mkdtemp(prefix="crosspost_"))
-    blocks, hashtags = to_blocks(html, workdir, download)
-    print(f"제목: {title}")
-    print(f"블록 {len(blocks)}개 (사진 {sum(b.kind == 'image' for b in blocks)}장) · 태그 {len(hashtags)}개")
+    print(f"제목: {post.title}")
     if args.dry_run:
+        from autopost.blogger_import import to_blocks
+
+        blocks, hashtags = to_blocks(post.html, workdir, download)
+        print(f"블록 {len(blocks)}개 (사진 {sum(b.kind == 'image' for b in blocks)}장) · 태그 {len(hashtags)}개")
         for block in blocks:
             print(f"  [{block.kind}] {block.image.name if block.image else block.text[:40]!r}")
         return 0
@@ -62,7 +57,7 @@ def main() -> int:
         cfg.naver_blog_id, cfg.naver_storage_state_b64, args.mode or cfg.naver_publish_mode, cfg.output_dir,
         on_session_updated=lambda value: not save_everywhere({"NAVER_STORAGE_STATE_B64": value}, Path(".env"), True),
     )
-    result = publisher.publish_blocks(title, blocks, hashtags)
+    result = crosspost(post, workdir, download, publisher)
     print(("✅ " if result.ok else "❌ ") + result.message, result.url)
     return 0 if result.ok else 1
 

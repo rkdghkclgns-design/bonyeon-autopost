@@ -89,14 +89,14 @@ jobs:
       SLACK_CHANNEL_VIDEO: ${{ vars.SLACK_CHANNEL_VIDEO }}
       SLACK_CHANNEL_PUBLISH: ${{ vars.SLACK_CHANNEL_PUBLISH }}
       BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
-      NAVER_BLOG_ID: ${{ secrets.NAVER_BLOG_ID }}
-      NAVER_STORAGE_STATE_B64: ${{ secrets.NAVER_STORAGE_STATE_B64 }}
+      # 네이버는 GitHub(해외 서버)에서 접속하면 로그인이 끊겨서 여기서는 발행하지 않는다.
+      # 구글 글이 올라가면 내 PC 예약 작업(scripts/naver_daily.py)이 같은 글을 네이버에 올린다.
+      NAVER_ON_PC: "true"
       TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
       TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
       TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
       # (선택) 갱신된 네이버 세션/틱톡 토큰을 시크릿에 자동 저장할 PAT (Secrets: Read and write)
       GH_SECRETS_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
-      HAS_NAVER: ${{ secrets.NAVER_STORAGE_STATE_B64 != '' && secrets.NAVER_BLOG_ID != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -111,10 +111,6 @@ jobs:
 
       - name: 패키지 설치
         run: pip install -r requirements.txt
-
-      - name: 네이버용 브라우저 설치
-        if: env.HAS_NAVER == 'true'
-        run: python -m playwright install --with-deps chromium
 
       - name: 자동화 실행
         id: autopost

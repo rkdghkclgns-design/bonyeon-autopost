@@ -227,6 +227,19 @@ Secret `GH_SECRETS_TOKEN` 으로 등록하면 갱신값을 자동으로 시크�
 - 결과물(사진·원고·영상)은 슬랙 진행 스레드에 올라가고, 실행이 실패했을 때만 오류 진단 자료(스크린샷 등)가 Actions 의 Artifacts 에 3일간 보관됩니다.
 - 스케줄 변경: `.github/workflows/auto_post.yml` 의 `cron` (UTC 기준, KST-9시간)
 
+### 네이버 발행 — 내 PC 예약 작업
+
+네이버는 접속 위치가 바뀌면(미국 GitHub 서버 ↔ 한국 PC) 로그인을 끊어서, **GitHub 에서는 네이버에 접속하지 않습니다.**
+대신 내 PC 의 Windows 작업 스케줄러(`BonyeonNaverDaily`)가 매일 **10:30 · 11:30** 에 `scripts/naver_daily.py` 를 실행해
+그날 구글 블로그에 올라간 글을 **제목·본문·사진 순서·태그까지 똑같이** 네이버에 올리고 `#autopost-4-발행결과` 에 보고합니다.
+
+- PC 가 꺼진 날은 실행되지 않으므로 **구글 글만** 올라갑니다. (절전 상태면 깨워서 실행)
+- 이미 올린 글은 `output/naver_crossposted.json` 에 기록되어 두 번 올리지 않습니다 (11:30 은 10:40 예비 실행 대비).
+- 실패하면(로그인 만료 등) 멈춘 화면과 함께 슬랙에 보고되고, 다음 예약 시각에 다시 시도합니다.
+- 네이버 로그인은 **이 PC 에서만** 합니다: `python scripts/export_naver_cookies.py` (로그인 상태 유지 체크, IP보안 끔)
+- 예약 등록/해제: `powershell -ExecutionPolicy Bypass -File scripts\install_naver_task.ps1` (`-Remove` 로 해제)
+- 특정 구글 글을 수동으로 옮기기: `python scripts/crosspost_naver.py <구글 글 주소>` (`--dry-run` 으로 미리 확인)
+
 ### 로그인 토큰 만료 알림
 
 Actions **'로그인 토큰 만료 점검'** 이 매일 09:00(KST)에 만료일을 확인해, 만료 **3일 전부터** `#autopost-로그인토큰-만료알림` 에 보고합니다.
