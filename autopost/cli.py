@@ -28,8 +28,8 @@ TRUTHY = {"1", "true", "yes", "y", "on"}
 
 
 PLATFORM_KEYS = ("google", "naver", "tiktok")
-# 네이버는 접속 위치가 바뀌면 로그인을 끊어서 GitHub(미국) 에서는 발행하지 않는다 → 내 PC 예약 작업이 발행
-NAVER_ON_PC_REASON = "내 PC 예약 작업이 10:30 에 같은 글로 발행 (PC가 꺼진 날은 건너뜀)"
+# 네이버 발행 중지 (로그인 유지 문제로 사용하지 않음). 다시 쓰려면 워크플로의 NAVER_DISABLED 를 지운다
+NAVER_DISABLED_REASON = "네이버 발행 사용 안 함 (중지됨)"
 
 
 def parse_only(text: str) -> tuple[str, ...]:
@@ -85,7 +85,7 @@ def build_services(cfg: Config, slack: SlackNotifier, mode: str) -> Services:
             cfg.output_dir,
             on_session_updated=lambda value: update_github_secret("NAVER_STORAGE_STATE_B64", value),
         )
-        if cfg.naver_enabled and not _env_flag("NAVER_ON_PC") else None
+        if cfg.naver_enabled and not _env_flag("NAVER_DISABLED") else None
     )
     tiktok = (
         TikTokPublisher(
@@ -99,7 +99,7 @@ def build_services(cfg: Config, slack: SlackNotifier, mode: str) -> Services:
         )
         if cfg.tiktok_enabled else None
     )
-    naver_skip_reason = (NAVER_ON_PC_REASON if _env_flag("NAVER_ON_PC") else "NAVER_* 미설정")
+    naver_skip_reason = (NAVER_DISABLED_REASON if _env_flag("NAVER_DISABLED") else "NAVER_* 미설정")
     return Services(drive=drive, slack=slack, generator=generator, blogger=blogger, naver=naver, tiktok=tiktok,
                     naver_skip_reason=naver_skip_reason)
 

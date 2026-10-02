@@ -89,9 +89,8 @@ jobs:
       SLACK_CHANNEL_VIDEO: ${{ vars.SLACK_CHANNEL_VIDEO }}
       SLACK_CHANNEL_PUBLISH: ${{ vars.SLACK_CHANNEL_PUBLISH }}
       BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
-      # 네이버는 GitHub(해외 서버)에서 접속하면 로그인이 끊겨서 여기서는 발행하지 않는다.
-      # 구글 글이 올라가면 내 PC 예약 작업(scripts/naver_daily.py)이 같은 글을 네이버에 올린다.
-      NAVER_ON_PC: "true"
+      # 네이버 발행은 중지 (접속 위치가 바뀌면 로그인이 끊겨 안정적으로 쓸 수 없음). 구글 블로그·틱톡만 발행한다.
+      NAVER_DISABLED: "true"
       TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
       TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
       TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}

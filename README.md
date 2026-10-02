@@ -227,7 +227,14 @@ Secret `GH_SECRETS_TOKEN` 으로 등록하면 갱신값을 자동으로 시크�
 - 결과물(사진·원고·영상)은 슬랙 진행 스레드에 올라가고, 실행이 실패했을 때만 오류 진단 자료(스크린샷 등)가 Actions 의 Artifacts 에 3일간 보관됩니다.
 - 스케줄 변경: `.github/workflows/auto_post.yml` 의 `cron` (UTC 기준, KST-9시간)
 
-### 네이버 발행 — 내 PC 예약 작업
+### 네이버 발행 — 중지됨
+
+> **현재 네이버 발행은 사용하지 않습니다.** 매일 구글 블로그(+ 틱톡 받은편지함)만 발행하며, PC 예약 작업도 해제했습니다.
+> 슬랙 결과에는 `⏭️ 네이버 블로그 — 네이버 발행 사용 안 함 (중지됨)` 으로 표시됩니다. 아래는 다시 켤 때를 위한 기록입니다.
+> 다시 켜기: `auto_post.yml` 의 `NAVER_DISABLED` 를 지우거나(GitHub 에서 발행 — 로그인이 끊길 수 있음),
+> PC 예약 작업을 `scripts\install_naver_task.ps1` 로 다시 등록.
+
+#### (참고) 내 PC 예약 작업 방식
 
 네이버는 접속 위치가 바뀌면(미국 GitHub 서버 ↔ 한국 PC) 로그인을 끊어서, **GitHub 에서는 네이버에 접속하지 않습니다.**
 대신 내 PC 의 Windows 작업 스케줄러(`BonyeonNaverDaily`)가 매일 **10:30 · 11:30** 에 `scripts/naver_daily.py` 를 실행해

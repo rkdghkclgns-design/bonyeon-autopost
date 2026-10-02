@@ -30,7 +30,6 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
           SLACK_CHANNEL_TOKEN_ALERT: ${{ vars.SLACK_CHANNEL_TOKEN_ALERT }}
-          NAVER_STORAGE_STATE_B64: ${{ secrets.NAVER_STORAGE_STATE_B64 }}
           TIKTOK_CONFIGURED: ${{ secrets.TIKTOK_REFRESH_TOKEN != '' }}
           TIKTOK_REFRESH_EXPIRES_AT: ${{ secrets.TIKTOK_REFRESH_EXPIRES_AT }}
           FORCE_FLAG: ${{ inputs.force && '--force' || '' }}
