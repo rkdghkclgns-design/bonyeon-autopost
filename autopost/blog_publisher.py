@@ -8,6 +8,7 @@ from typing import Mapping, Sequence
 
 from .ai_helper import PostContent
 from .constants import REVIEW_CAPTION, REVIEW_HEADING, STAGE_LABELS, STAGES
+from .editorial import category_label, normalize_html, normalize_text
 from .results import PublishResult
 
 log = logging.getLogger(__name__)
@@ -100,13 +101,13 @@ def build_blog_html(
     if footer_url:
         parts.append(_img(footer_url, "상담 문의 안내"))
     parts.append(f'<p style="text-align:center;color:#1a73e8;">{html.escape(" ".join(content.hashtags))}</p>')
-    return "\n".join(parts)
+    return normalize_html("\n".join(parts))
 
 
 def build_labels(category: str, hashtags: Sequence[str]) -> list[str]:
-    labels = [category]
+    labels = [category_label(category)]
     for tag in hashtags:
-        label = tag.lstrip("#")
+        label = category_label(normalize_text(tag.lstrip("#")))
         if label and label not in labels:
             labels.append(label)
         if len(labels) >= MAX_LABELS:
@@ -120,7 +121,10 @@ class BloggerPublisher:
         self._blog_id = blog_id
 
     def publish(self, title: str, html_body: str, labels: Sequence[str]) -> PublishResult:
-        body = {"kind": "blogger#post", "title": title, "content": html_body, "labels": list(labels)}
+        body = {
+            "kind": "blogger#post", "title": normalize_text(title), "content": normalize_html(html_body),
+            "labels": list(dict.fromkeys(category_label(normalize_text(label)) for label in labels)),
+        }
         response = (
             self._service.posts()
             .insert(blogId=self._blog_id, body=body, isDraft=False)

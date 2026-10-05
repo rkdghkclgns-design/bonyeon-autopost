@@ -59,6 +59,13 @@ def test_values_are_stripped():
     assert cfg.blogger_blog_id == "42"
 
 
+def test_naver_stays_disabled_with_saved_credentials_and_env_override():
+    cfg = load_config({**GOOGLE, "GEMINI_API_KEY": "g", "NAVER_BLOG_ID": "myblog",
+                       "NAVER_STORAGE_STATE_B64": "saved", "NAVER_DISABLED": "false"})
+    assert not cfg.naver_enabled
+    assert any("플랫폼" in error for error in validate_for_mode(cfg, "post"))
+
+
 @pytest.mark.parametrize("key,value", [
     ("PHOTOS_PER_STAGE", "abc"),
     ("PHOTOS_PER_STAGE", "0"),

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from .constants import CATEGORY_DESCRIPTIONS, SERVICE_AREA, SERVICE_AREA_LINE, STAGE_LABELS, STAGES
+from .editorial import normalize_text
 from .regions import AreaPick
 
 log = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ STANDALONE_LINE = re.compile(r"[:：]|\d{2,4}-\d{3,4}-\d{4}$")  # '문의: 010-�
 TIKTOK_CAPTION_MAX = 2000
 GENERIC_TAGS = (
     "청소업체", "청소전문", "청소현장", "전후비교", "깨끗한공간",
-    "청소대행", "상가청소", "건물관리", "청소서비스", "위생관리",
+    "청소대행", "상가청소", "상업시설관리", "청소서비스", "위생관리",
     "청소꿀팁", "공간관리", "전문청소", "청소견적", "청결",
 )
 
@@ -109,7 +110,7 @@ def area_rules(
         return (
             f"[{place} {category}] {headline}",
             f"이번 현장은 실제로 '{area.label}'에 있습니다. title·intro 에 '{place} {category}' 를 자연스럽게 넣되 "
-            f"더 구체적인 주소·건물명은 쓰지 않습니다. {service}",
+            f"더 구체적인 주소·시설명은 쓰지 않습니다. {service}",
         )
     return (
         f"{headline} | {area.region} {category} {company}",
@@ -143,7 +144,7 @@ def normalize_hashtags(
     result: list[str] = []
     fallback = (category, company.replace(" ", ""), *GENERIC_TAGS)
     for raw in (*priority, *tags, *fallback):
-        cleaned = re.sub(r"[^0-9A-Za-z가-힣_]", "", str(raw))[:MAX_HASHTAG_LEN]
+        cleaned = re.sub(r"[^0-9A-Za-z가-힣_]", "", normalize_text(str(raw)))[:MAX_HASHTAG_LEN]
         key = cleaned.lower()
         if not cleaned or key in seen:
             continue
@@ -162,7 +163,7 @@ def _strip_code_fence(text: str) -> str:
 def _text(value: object, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ContentGenerationError(f"AI 응답의 '{field}' 필드가 비어 있습니다")
-    return value.strip()
+    return normalize_text(value.strip())
 
 
 def _joined_len(words: Sequence[str]) -> int:
@@ -252,12 +253,12 @@ def _clean_tips(value: object) -> str:
     lines = value.strip().split("\n")
     if lines and "TIP" in lines[0].upper() and len(lines[0]) <= 30:
         lines = lines[1:]
-    return wrap_mobile("\n".join(lines).strip())
+    return wrap_mobile(normalize_text("\n".join(lines).strip()))
 
 
 def _captions(value: object, count: int | None) -> tuple[str, ...]:
     """사진 설명 목록을 정리하고, 사진 수가 주어지면 개수를 정확히 맞춘다 (부족분은 빈 설명)."""
-    items = [wrap_mobile(str(v).strip()) for v in value] if isinstance(value, list) else []
+    items = [wrap_mobile(normalize_text(str(v).strip())) for v in value] if isinstance(value, list) else []
     if count is None:
         return tuple(items)
     return tuple((items + [""] * count)[:count])
@@ -388,6 +389,8 @@ def build_prompt(
    "현장 사진을 보내주시면 상담·견적 도와드립니다" 안내 → 전화 {phone}
 
 [문체]
+- 시설 명칭은 항상 '상업 시설'로 씁니다. '건물'이라는 표현은 제목·본문·사진 설명·TIP·캡션에서 사용하지 않습니다.
+- 해시태그에는 공백 없이 '상업시설'로 씁니다.
 - 업체 1인칭의 친근하고 믿음직한 말투 (~입니다 / ~했어요 혼용). 느낌표·이모티콘(:) 등)은 글 전체에 3~5개만.
 - 한 문장은 짧고 명확하게(40자 안팎) 쓰고, 문장이 끝날 때마다 줄을 바꿉니다 (줄바꿈은 \\n).
 - 고객 후기처럼 쓰지 않고, 고객의 말이나 평가를 지어내지 않습니다.

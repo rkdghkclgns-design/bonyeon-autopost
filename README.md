@@ -1,6 +1,6 @@
 # 청소업체 올인원 포스팅 자동화
 
-구글 드라이브에 현장 사진만 올리면 **구글 블로그 · 네이버 블로그 · 틱톡**에 자동으로 글/영상을 올리고, 결과를 **슬랙**으로 보고합니다.
+구글 드라이브에 현장 사진만 올리면 **구글 블로그 · 틱톡**에 자동으로 글/영상을 올리고, 결과를 **슬랙**으로 보고합니다. **네이버 발행은 사용하지 않으며 코드에서 차단합니다.**
 GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 폴더·기본 템플릿을 **코드가 스스로 만듭니다 (Zero-Touch Setup)**.
 
 ```
@@ -9,7 +9,7 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
                                              ▼
   구글 드라이브 ─▶ ① 셀프 세팅 점검 ─▶ ② 사진 선택 ─▶ ③ EXIF 제거·세탁 ─▶ ④ Gemini 원고
                                                                           │
-         ⑦ 사진 사용 횟수 기록 ◀─ ⑥ 구글블로그 / 네이버 / 틱톡 발행 ◀─ ⑤ 9:16 영상
+         ⑦ 사진 사용 횟수 기록 ◀─ ⑥ 구글블로그 / 틱톡 발행 ◀─ ⑤ 9:16 영상
                      │
                      ▼
                ⑧ 슬랙 결과 카드 (+ 실패 시 수동 발행용 초안·영상)
@@ -55,7 +55,7 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
 | 구글 서비스 계정 | **내 구글 계정 OAuth refresh token** | 서비스 계정은 내 드라이브에 파일 업로드(저장 용량 0)와 Blogger 글 작성이 불가능 |
 | 슬랙 `/포스팅` → GitHub Actions | **Cloudflare Worker 중계** (`slack_relay/`) | GitHub Actions 는 슬랙 요청을 직접 받을 수 없음. Worker 가 슬랙 서명 검증 후 실행 (무료) |
 | 슬랙 명령어 `/포스팅`, `/초기세팅` | 기본 `/posting`, `/posting-setup` | 슬랙이 한글 명령어를 허용하는지 불확실. Worker 는 한글 이름도 인식하므로 등록되면 그대로 사용 가능 |
-| 네이버 블로그 자동 발행 | Playwright 로 에디터 조작 **+ 실패 시 슬랙으로 수동 발행용 초안** | 네이버는 글쓰기 API 가 없음. 화면 구조가 바뀌면 깨질 수 있어 안전장치 추가 |
+| 네이버 블로그 자동 발행 | **발행 중지, 코드에서 차단** | 운영 방침에 따라 네이버를 발행 대상에서 제외 |
 | 틱톡 업로드 | 공식 Content Posting API | 틱톡 앱 **심사(audit) 전에는 '나만 보기'로만 게시** 가능. 심사 통과 후 전체 공개 |
 | 기본 BGM | 무료 CC0 음원 "Sunglasses" (Loyalty Freak Music) | 퍼블릭 도메인이라 상업 이용·출처 표기 불필요. 드라이브 `00_공통_BGM/bgm.mp3` 만 교체하면 바뀜 |
 | (추가) | `98_블로그_게시이미지` 폴더 | Blogger 는 이미지를 직접 호스팅하지 않아 드라이브 공개 링크로 게시 |
@@ -77,7 +77,9 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
 │  ├─ ai_helper.py          Gemini Vision 원고·해시태그 15개·틱톡 캡션
 │  ├─ video_maker.py        9:16 고화질 영상 (원본 사진 · 패닝/확대 · 크로스페이드 · CRF18)
 │  ├─ blog_publisher.py     구글 블로그 (Blogger API v3)
-│  ├─ naver_publisher.py    네이버 블로그 (Playwright)
+│  ├─ editorial.py          상업 시설 용어·자료실 카테고리 공통 규칙
+│  ├─ blog_maintenance.py   기존 글의 용어·분류 점검
+│  ├─ naver_publisher.py    네이버 블로그 (발행 중지, 로컬 테스트만 허용)
 │  ├─ tiktok_publisher.py   틱톡 (Content Posting API)
 │  ├─ slack_helper.py       슬랙 알림·리포트 카드 (메시지 수정·스레드·파일 업로드)
 │  ├─ progress.py           슬랙 진행 상황 체크리스트 (단계별 갱신)
@@ -90,7 +92,7 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
 ├─ .github/workflows/
 │  ├─ auto_post.yml         자동 포스팅 (스케줄 / 수동 / 슬랙)
 │  └─ ci.yml                테스트
-└─ tests/                   pytest (234개) — 외부 서비스 없이 실행 (네이버 흐름은 로컬 가짜 에디터로 검증)
+└─ tests/                   pytest — 외부 서비스 없이 실행 (네이버 흐름은 로컬 가짜 에디터로 검증)
 ```
 
 드라이브에는 아래 구조가 **자동 생성**됩니다 (`DRIVE_ROOT_FOLDER_NAME` 폴더 안).
@@ -112,7 +114,7 @@ GitHub Actions(무료)에서 동작하며, 최초 1회 실행 시 드라이브 �
 ## 1회 준비 (약 1시간)
 
 > 준비물: 구글 계정(블로그 운영 계정), 슬랙 워크스페이스 관리자 권한, GitHub 계정, Cloudflare 계정(무료)
-> 네이버·틱톡은 나중에 추가해도 됩니다. **시크릿을 비워두면 그 플랫폼은 자동으로 건너뜁니다.**
+> 틱톡은 나중에 추가해도 됩니다. **시크릿을 비워두면 자동으로 건너뜁니다.** 네이버는 시크릿 유무와 관계없이 발행하지 않습니다.
 
 ### 0) GitHub 비공개 리포지토리
 1. GitHub 에서 **Private** 리포지토리를 만들고 이 폴더를 push 합니다.
@@ -167,16 +169,8 @@ https://aistudio.google.com/apikey 에서 키 발급 → Secret `GEMINI_API_KEY`
 슬랙에서 `/posting-setup` (또는 GitHub `Actions → 청소 자동 포스팅 → Run workflow → mode: setup`)
 → 드라이브 폴더·템플릿이 자동 생성되고 슬랙에 **"✅ 초기 세팅 완료" + 연동 점검표**가 옵니다.
 
-### 6) (선택) 네이버 블로그
-```bash
-python -m playwright install chromium
-python scripts/export_naver_cookies.py
-```
-열린 창에서 **직접** 로그인('로그인 상태 유지' 체크)만 하면 로그인을 자동 감지하고, 블로그 아이디를 찾아
-`NAVER_BLOG_ID`·`NAVER_STORAGE_STATE_B64` 를 `.env` 와 GitHub Secrets(gh CLI)에 바로 저장합니다 (값은 화면에 출력하지 않음).
-블로그 아이디를 못 찾으면 `--blog-id 아이디` 를 붙여 다시 실행하세요.
-- 네이버 `내정보 → 보안설정 → 해외 로그인 차단`이 켜져 있으면 GitHub(해외 서버)에서 막힐 수 있습니다.
-- 처음에는 Variable `NAVER_PUBLISH_MODE=draft` 로 **임시저장**만 해서 결과를 확인한 뒤 `publish` 로 바꾸는 것을 권장합니다.
+### 6) 네이버 블로그 — 발행 중지
+네이버 계정이나 세션을 설정할 필요가 없습니다. 저장된 정보가 있더라도 발행하지 않습니다.
 
 ### 7) (선택) 틱톡
 1. https://developers.tiktok.com → 앱 생성 → **Login Kit**, **Content Posting API** 추가 → 스코프 `user.info.basic`, `video.publish`, `video.upload`
@@ -223,29 +217,26 @@ Secret `GH_SECRETS_TOKEN` 으로 등록하면 갱신값을 자동으로 시크�
   새 현장인 것처럼 쓰지 않고, 작업 전·후가 다른 장소일 수 있어 **전후 비교 이미지도 넣지 않습니다** (허위 현장 방지).
   새 현장 사진을 올리면 다음 글은 다시 '현장 기록' 글(전후 비교 포함)로 올라갑니다.
 - 더 이상 쓰고 싶지 않은 사진은 드라이브에서 지우면 됩니다. (예전 `99_사용완료_사진` 폴더는 더 이상 쓰지 않음)
-- 네이버/틱톡이 실패하면 진행 메시지 스레드에 **수동 발행용 원고와 영상**이 올라옵니다.
+- 구글 블로그/틱톡이 실패하면 진행 메시지 스레드에 **수동 발행용 원고와 영상**이 올라옵니다.
 - 결과물(사진·원고·영상)은 슬랙 진행 스레드에 올라가고, 실행이 실패했을 때만 오류 진단 자료(스크린샷 등)가 Actions 의 Artifacts 에 3일간 보관됩니다.
 - 스케줄 변경: `.github/workflows/auto_post.yml` 의 `cron` (UTC 기준, KST-9시간)
 
 ### 네이버 발행 — 중지됨
 
-> **현재 네이버 발행은 사용하지 않습니다.** 매일 구글 블로그(+ 틱톡 받은편지함)만 발행하며, PC 예약 작업도 해제했습니다.
-> 슬랙 결과에는 `⏭️ 네이버 블로그 — 네이버 발행 사용 안 함 (중지됨)` 으로 표시됩니다. 아래는 다시 켤 때를 위한 기록입니다.
-> 다시 켜기: `auto_post.yml` 의 `NAVER_DISABLED` 를 지우거나(GitHub 에서 발행 — 로그인이 끊길 수 있음),
-> PC 예약 작업을 `scripts\install_naver_task.ps1` 로 다시 등록.
+네이버 발행은 `autopost/constants.py`의 `NAVER_PUBLISHING_ENABLED=False`로 차단합니다.
+`NAVER_DISABLED`를 삭제하거나 `false`로 바꿔도 재개되지 않습니다. 메인 파이프라인, 네이버 발행기,
+`scripts/naver_daily.py`, `scripts/crosspost_naver.py` 모두 실제 발행·임시저장을 건너뜁니다.
+기존 PC 예약 작업은 해제되어 있으며, 네이버 관련 코드는 과거 구현과 로컬 테스트용으로 보관합니다.
 
-#### (참고) 내 PC 예약 작업 방식
+### 블로그 용어와 자료실
 
-네이버는 접속 위치가 바뀌면(미국 GitHub 서버 ↔ 한국 PC) 로그인을 끊어서, **GitHub 에서는 네이버에 접속하지 않습니다.**
-대신 내 PC 의 Windows 작업 스케줄러(`BonyeonNaverDaily`)가 매일 **10:30 · 11:30** 에 `scripts/naver_daily.py` 를 실행해
-그날 구글 블로그에 올라간 글을 **제목·본문·사진 순서·태그까지 똑같이** 네이버에 올리고 `#autopost-4-발행결과` 에 보고합니다.
-
-- PC 가 꺼진 날은 실행되지 않으므로 **구글 글만** 올라갑니다. (절전 상태면 깨워서 실행)
-- 이미 올린 글은 `output/naver_crossposted.json` 에 기록되어 두 번 올리지 않습니다 (11:30 은 10:40 예비 실행 대비).
-- 실패하면(로그인 만료 등) 멈춘 화면과 함께 슬랙에 보고되고, 다음 예약 시각에 다시 시도합니다.
-- 네이버 로그인은 **이 PC 에서만** 합니다: `python scripts/export_naver_cookies.py` (로그인 상태 유지 체크, IP보안 끔)
-- 예약 등록/해제: `powershell -ExecutionPolicy Bypass -File scripts\install_naver_task.ps1` (`-Remove` 로 해제)
-- 특정 구글 글을 수동으로 옮기기: `python scripts/crosspost_naver.py <구글 글 주소>` (`--dry-run` 으로 미리 확인)
+- 제목·본문·사진 설명·관리 TIP·캡션에서 시설 명칭은 **상업 시설**로 통일합니다.
+  이전 원고에 `건물`이 남아 있어도 생성 결과와 Blogger 발행 단계에서 치환합니다. 해시태그는 공백 없는 `상업시설`을 사용합니다.
+- 블로그 사이드바 **자료실**은 **정기청소 / 로프청소 / 방역 소독**의 글 목록으로 연결됩니다.
+  새 글에는 해당 카테고리 라벨이 자동으로 붙습니다. 내부 드라이브 폴더명 `03_방역소독`은 그대로 사용합니다.
+- 기존 글 점검: `python scripts/update_blog_posts.py`.
+  실제 수정은 `--apply`를 붙이며, 수정 전에 `output/blog_maintenance/`에 원본을 백업합니다.
+  사진 URL·글 주소·발행일을 유지하고 수정 후 다시 읽어 검증합니다.
 
 ### 로그인 토큰 만료 알림
 

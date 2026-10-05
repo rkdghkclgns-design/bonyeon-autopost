@@ -19,7 +19,9 @@ from urllib.parse import urlparse
 
 from .ai_helper import PostContent
 from .blog_publisher import tips_heading
-from .constants import REVIEW_CAPTION, REVIEW_HEADING, STAGE_LABELS, STAGES
+from .constants import (
+    NAVER_DISABLED_REASON, NAVER_PUBLISHING_ENABLED, REVIEW_CAPTION, REVIEW_HEADING, STAGE_LABELS, STAGES,
+)
 from .results import PublishResult
 
 log = logging.getLogger(__name__)
@@ -196,6 +198,9 @@ class NaverPublisher:
 
     def publish_blocks(self, title: str, blocks: Sequence[NaverBlock], hashtags: Sequence[str]) -> PublishResult:
         """이미 정해진 블록 순서 그대로 발행 (구글 블로그 글을 네이버에 똑같이 올릴 때 사용)."""
+        # 로컬 가짜 에디터 테스트만 허용하며, 실제 사이트는 브라우저를 열기 전에 차단한다.
+        if not NAVER_PUBLISHING_ENABLED and urlparse(self._write_url).hostname not in ("localhost", "127.0.0.1", "::1"):
+            return PublishResult.skip(PLATFORM, NAVER_DISABLED_REASON)
         from playwright.sync_api import sync_playwright
 
         state = decode_storage_state(self._storage_state_b64)

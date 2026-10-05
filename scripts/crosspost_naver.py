@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from autopost.naver_crosspost import crosspost, fetch_post_by_url  # noqa: E402
 from autopost.cli import _load_dotenv  # noqa: E402
 from autopost.config import load_config  # noqa: E402
+from autopost.constants import NAVER_DISABLED_REASON, NAVER_PUBLISHING_ENABLED  # noqa: E402
 from autopost.google_auth import build_blogger_service, build_credentials  # noqa: E402
 from autopost.local_secrets import save_everywhere  # noqa: E402
 from autopost.naver_publisher import NaverPublisher  # noqa: E402
@@ -38,6 +39,10 @@ def main() -> int:
     parser.add_argument("--mode", choices=("publish", "draft"), default="")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+
+    if not args.dry_run and not NAVER_PUBLISHING_ENABLED:
+        print(NAVER_DISABLED_REASON)
+        return 0
 
     _load_dotenv()
     cfg = load_config(dict(os.environ))

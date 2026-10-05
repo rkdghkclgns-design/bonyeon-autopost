@@ -33,7 +33,7 @@ on:
         type: boolean
         default: false
       only:
-        description: "이 플랫폼만 발행 (쉼표 구분: google,naver,tiktok). 비우면 전체"
+        description: "이 플랫폼만 발행 (쉼표 구분: google,tiktok). 비우면 전체 — 네이버 발행 중지"
         required: false
         type: string
       source:

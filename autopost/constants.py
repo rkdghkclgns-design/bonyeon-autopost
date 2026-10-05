@@ -31,6 +31,10 @@ STAGE_LABELS = {
 SERVICE_AREA = "수도권"
 SERVICE_AREA_LINE = f"{SERVICE_AREA} 전 지역 출장·상담 가능합니다."
 
+# 운영 결정: 환경변수나 로그인 정보가 남아 있어도 네이버에는 발행하지 않는다.
+NAVER_PUBLISHING_ENABLED = False
+NAVER_DISABLED_REASON = "네이버 발행 사용 안 함 (중지됨)"
+
 
 @dataclass(frozen=True)
 class Category:
@@ -46,7 +50,7 @@ CATEGORIES: tuple[Category, ...] = (
 
 # AI 원고 인사말에 쓰는 업종 설명 ("안녕하세요! ○○ 전문 본연클린입니다")
 CATEGORY_DESCRIPTIONS = {
-    "정기청소": "건물·사무실 정기청소",
+    "정기청소": "상업 시설·사무실 정기청소",
     "로프청소": "로프 외벽·간판·유리창 청소",
     "방역소독": "방역·소독",
 }

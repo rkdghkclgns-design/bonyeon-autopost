@@ -118,3 +118,12 @@ def test_encode_storage_state_drops_origins_when_too_large_for_secret():
 def test_publisher_defers_decoding_until_publish(tmp_path):
     # 잘못된 세션 값이어도 생성 단계에서는 실패하지 않아야 다른 플랫폼 발행이 계속된다
     NaverPublisher("myblog", "invalid", "publish", tmp_path)
+
+
+@pytest.mark.parametrize("mode", ["publish", "draft"])
+def test_actual_naver_is_blocked_before_browser_or_session_decoding(tmp_path, mode):
+    publisher = NaverPublisher("myblog", "invalid", mode, tmp_path)
+    result = publisher.publish_blocks("제목", (), ())
+    assert result.skipped and not result.ok
+    assert "중지됨" in result.message
+    assert not list(tmp_path.iterdir())

@@ -13,6 +13,7 @@ from typing import Sequence
 from .ai_helper import ContentGenerator
 from .blog_publisher import BloggerPublisher
 from .config import MODES, Config, ConfigError, load_config, validate_for_mode
+from .constants import NAVER_DISABLED_REASON
 from .drive_helper import DriveHelper
 from .github_secrets import update_github_secret
 from .google_auth import build_blogger_service, build_credentials, build_drive_service
@@ -28,8 +29,6 @@ TRUTHY = {"1", "true", "yes", "y", "on"}
 
 
 PLATFORM_KEYS = ("google", "naver", "tiktok")
-# 네이버 발행 중지 (로그인 유지 문제로 사용하지 않음). 다시 쓰려면 워크플로의 NAVER_DISABLED 를 지운다
-NAVER_DISABLED_REASON = "네이버 발행 사용 안 함 (중지됨)"
 
 
 def parse_only(text: str) -> tuple[str, ...]:
@@ -99,7 +98,7 @@ def build_services(cfg: Config, slack: SlackNotifier, mode: str) -> Services:
         )
         if cfg.tiktok_enabled else None
     )
-    naver_skip_reason = (NAVER_DISABLED_REASON if _env_flag("NAVER_DISABLED") else "NAVER_* 미설정")
+    naver_skip_reason = NAVER_DISABLED_REASON
     return Services(drive=drive, slack=slack, generator=generator, blogger=blogger, naver=naver, tiktok=tiktok,
                     naver_skip_reason=naver_skip_reason)
 

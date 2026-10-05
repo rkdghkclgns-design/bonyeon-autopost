@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from .constants import NAVER_DISABLED_REASON, NAVER_PUBLISHING_ENABLED
+
 MODES = ("post", "setup")
 NAVER_MODES = ("publish", "draft")
 TIKTOK_MODES = ("direct", "inbox")
@@ -78,7 +80,7 @@ class Config:
 
     @property
     def naver_enabled(self) -> bool:
-        return bool(self.naver_blog_id and self.naver_storage_state_b64)
+        return NAVER_PUBLISHING_ENABLED and bool(self.naver_blog_id and self.naver_storage_state_b64)
 
     @property
     def tiktok_enabled(self) -> bool:
@@ -210,7 +212,7 @@ def validate_for_mode(config: Config, mode: str) -> list[str]:
         if not (config.blogger_enabled or config.naver_enabled or config.tiktok_enabled):
             errors.append(
                 "발행할 플랫폼이 하나도 설정되지 않았습니다 "
-                "(BLOGGER_BLOG_ID / NAVER_* / TIKTOK_* 중 최소 1개)"
+                "(BLOGGER_BLOG_ID / TIKTOK_* 중 최소 1개, 네이버는 발행 중지)"
             )
     return errors
 
@@ -221,7 +223,7 @@ def platform_readiness(config: Config) -> list[tuple[str, bool, str]]:
         ("구글 드라이브", config.google is not None, "GOOGLE_* 시크릿"),
         ("Gemini AI", bool(config.gemini_api_key), "GEMINI_API_KEY"),
         ("구글 블로그", config.blogger_enabled, "BLOGGER_BLOG_ID"),
-        ("네이버 블로그", config.naver_enabled, "NAVER_BLOG_ID + NAVER_STORAGE_STATE_B64"),
+        ("네이버 블로그", config.naver_enabled, NAVER_DISABLED_REASON),
         ("틱톡", config.tiktok_enabled, "TIKTOK_CLIENT_KEY/SECRET/REFRESH_TOKEN"),
         ("슬랙", config.slack_enabled, "SLACK_BOT_TOKEN + SLACK_CHANNEL_ID 또는 SLACK_WEBHOOK_URL"),
     ]

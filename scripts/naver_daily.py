@@ -23,6 +23,7 @@ os.chdir(ROOT)  # 작업 스케줄러에서 실행될 때도 .env · output 경�
 
 from autopost.cli import _load_dotenv  # noqa: E402
 from autopost.config import load_config  # noqa: E402
+from autopost.constants import NAVER_DISABLED_REASON, NAVER_PUBLISHING_ENABLED  # noqa: E402
 from autopost.google_auth import build_blogger_service, build_credentials  # noqa: E402
 from autopost.local_secrets import save_everywhere  # noqa: E402
 from autopost.naver_crosspost import PostedLog, run_daily, todays_posts  # noqa: E402
@@ -68,14 +69,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="오늘 구글 글을 네이버에 똑같이 올리기 (PC 예약 작업)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if not args.dry_run and not NAVER_PUBLISHING_ENABLED:
+        print(NAVER_DISABLED_REASON)
+        return 0
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
                         handlers=[logging.FileHandler(LOG_PATH, encoding="utf-8"), logging.StreamHandler()])
 
     _load_dotenv()
     cfg = load_config(dict(os.environ))
-    if not (cfg.google and cfg.blogger_blog_id and cfg.naver_enabled):
-        logging.error("구글 블로그 또는 네이버 설정이 없습니다 (.env 확인)")
+    if not (cfg.google and cfg.blogger_blog_id):
+        logging.error("구글 블로그 설정이 없습니다 (.env 확인)")
         return 1
     blogger = build_blogger_service(build_credentials(cfg.google))
     now = datetime.now(KST)
