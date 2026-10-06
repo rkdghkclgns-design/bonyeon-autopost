@@ -17,8 +17,8 @@ PANEL_HEIGHT = 900
 def _panel(path: Path, height: int) -> Image.Image:
     with Image.open(path) as opened:
         image = ImageOps.exif_transpose(opened).convert("RGB")
-    width = max(1, round(image.width * height / image.height))
-    return image.resize((width, height), Image.Resampling.LANCZOS)
+    # 원본 방향과 무관하게 같은 정사각형 칸을 채운다. 비율을 유지해 중앙에서 자른다.
+    return ImageOps.fit(image, (height, height), Image.Resampling.LANCZOS)
 
 
 def _label(canvas: Image.Image, x: int, text: str) -> None:
@@ -75,6 +75,7 @@ def make_vertical_comparison(
 
 
 def make_comparison(before: Path, after: Path, out_path: Path, height: int = PANEL_HEIGHT) -> Path:
+    """블로그용: 작업 전·후를 동일한 정사각형 칸에 50:50으로 배치한다."""
     left, right = _panel(before, height), _panel(after, height)
     total = left.width + GAP + right.width
     canvas = Image.new("RGB", (total, height), "white")
