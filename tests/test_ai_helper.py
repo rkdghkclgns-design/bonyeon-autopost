@@ -13,6 +13,7 @@ from autopost.ai_helper import (
     parse_content,
 )
 from autopost.regions import AreaPick
+from autopost.editorial import company_introduction
 from fakes import FakeGeminiClient, ai_json, make_jpeg
 
 
@@ -143,7 +144,7 @@ def test_build_prompt_contains_format_rules_and_plan():
     assert "010-1111-2222" in prompt
     assert "작업전 사진 2장, 작업후 사진 3장" in prompt
     assert "작업중" not in prompt.split("sections 는 이 순서와 사진 수로만 작성하세요:")[1]
-    assert "안녕하세요! 방역·소독 전문 본연클린입니다." in prompt
+    assert f"안녕하세요! {company_introduction('본연클린')}" in prompt
     assert "고객 후기처럼 쓰지 않고" in prompt
     assert "친환경·무독성" in prompt
     assert "사진 번호·촬영 언급 없이" in prompt

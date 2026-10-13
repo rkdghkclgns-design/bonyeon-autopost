@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from .editorial import CATEGORY_LABELS, category_label, normalize_html, normalize_text
+from .editorial import CATEGORY_LABELS, category_label, normalize_company_html, normalize_html, normalize_text
 
 
 def infer_category(post: Mapping) -> str:
@@ -17,15 +17,18 @@ def infer_category(post: Mapping) -> str:
     return next(iter(known))
 
 
-def post_patch(post: Mapping) -> dict:
+def post_patch(post: Mapping, company: str = "") -> dict:
     """바뀐 필드만 반환. 사진 URL·기존 글 주소·발행일은 수정하지 않는다."""
     category = infer_category(post)
     labels = list(dict.fromkeys((category, *(
         category_label(normalize_text(label)) for label in post.get("labels", [])
     ))))
+    content = normalize_html(str(post.get("content", "")))
+    if company:
+        content = normalize_company_html(content, company)
     values = {
         "title": normalize_text(str(post.get("title", ""))),
-        "content": normalize_html(str(post.get("content", ""))),
+        "content": content,
         "labels": labels,
     }
     return {

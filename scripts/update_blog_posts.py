@@ -1,4 +1,4 @@
-"""기존 글의 시설 명칭·자료실 분류를 맞춘다. 기본은 점검, --apply 때만 수정."""
+"""기존 글의 회사 소개·시설 명칭·자료실 분류를 맞춘다. --apply 때만 수정."""
 from __future__ import annotations
 
 import argparse
@@ -42,7 +42,7 @@ def main() -> int:
         raise SystemExit("Google 인증과 BLOGGER_BLOG_ID가 필요합니다")
     service = build_blogger_service(build_credentials(cfg.google))
     posts = list_posts(service, cfg.blogger_blog_id)
-    changes = [(post, post_patch(post)) for post in posts]
+    changes = [(post, post_patch(post, cfg.company_name)) for post in posts]
     changes = [(post, patch) for post, patch in changes if patch]
     for post, patch in changes:
         print(f"{post['id']} | {post['title']} | 수정: {', '.join(patch)}")
@@ -67,7 +67,9 @@ def main() -> int:
             raise RuntimeError(f"글 {original['id']}이 점검 이후 변경되어 중단합니다")
         service.posts().patch(blogId=cfg.blogger_blog_id, postId=original["id"], body=patch).execute(num_retries=3)
         result = service.posts().get(blogId=cfg.blogger_blog_id, postId=original["id"]).execute(num_retries=3)
-        if post_patch(result) or any(result.get(key) != original.get(key) for key in ("url", "published")):
+        if (post_patch(result, cfg.company_name)
+                or any(result.get(key) != value for key, value in patch.items() if key != "labels")
+                or any(result.get(key) != original.get(key) for key in ("url", "published"))):
             raise RuntimeError(f"글 {original['id']} 수정 후 검증 실패")
         verified.append({"id": result["id"], "url": result.get("url"), "title": result["title"],
                          "labels": result.get("labels", [])})

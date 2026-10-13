@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from .constants import CATEGORY_DESCRIPTIONS, SERVICE_AREA, SERVICE_AREA_LINE, STAGE_LABELS, STAGES
-from .editorial import normalize_text
+from .constants import SERVICE_AREA, SERVICE_AREA_LINE, STAGE_LABELS, STAGES
+from .editorial import company_introduction, normalize_text, with_company_introduction
 from .regions import AreaPick
 
 log = logging.getLogger(__name__)
@@ -304,7 +304,7 @@ def parse_content(
     caption = _text(data.get("tiktok_caption"), "tiktok_caption")[:TIKTOK_CAPTION_MAX]
     return PostContent(
         title=_text(data.get("title"), "title")[:120],
-        intro=wrap_mobile(_text(data.get("intro"), "intro")),
+        intro=wrap_mobile(with_company_introduction(_text(data.get("intro"), "intro"), company)),
         sections=sections,
         outro=wrap_mobile(with_service_area(_text(data.get("outro"), "outro"))),
         hashtags=normalize_hashtags(
@@ -368,14 +368,14 @@ def build_prompt(
 ) -> str:
     present = [s for s in STAGES if photo_counts.get(s)]
     stage_plan = ", ".join(f"{s} 사진 {photo_counts[s]}장" for s in present)
-    specialty = CATEGORY_DESCRIPTIONS.get(category, category)
+    introduction = company_introduction(company)
     framing = _framing(company, category, reused)
     title_example, area_rule = area_rules(area, category, company, framing.headline)
     return f"""당신은 청소 전문업체 '{company}'의 블로그 담당자이며, {framing.role}
 
 [글 구성]
 1. title: 검색 키워드가 들어간 제목. 예) "{title_example}" (50자 이내)
-2. intro: "안녕하세요! {specialty} 전문 {company}입니다." 로 시작해, {framing.intro},
+2. intro: "안녕하세요! {introduction}" 로 시작해, {framing.intro},
    이런 오염을 방치하면 어떤 문제가 생기는지까지 5~7문장으로 소개합니다.
 3. sections: 단계마다
    - heading: 인용구로 들어갈 짧은 소제목. 궁금증을 주는 문장 (예: "작업 전, 이 정도였어요")
@@ -397,6 +397,7 @@ def build_prompt(
 - 분량: 본문 전체(공백 제외 모든 텍스트 합) 1,300~1,800자. 짧게 끝내지 말고 공정의 이유와 차이를 충분히 설명합니다.
 
 [사실 규칙]
+- 첫 인사말의 전문분야는 회사 소개입니다. 사진에 없는 ESD 케어·전산실·데이터센터·준공·고소 로프 작업을 이번 현장에서 수행했다고 쓰지 않습니다.
 - 사진에서 확인되는 것만 씁니다. 가격·시간·약품명·면적 등은 사진에 명확히 보이지 않으면 쓰지 않습니다.
 - '친환경·무독성·살균 99%' 처럼 사진으로 확인할 수 없는 성분·효능 표현은 쓰지 않습니다.
 - {area_rule}
