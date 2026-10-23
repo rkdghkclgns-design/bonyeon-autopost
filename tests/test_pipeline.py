@@ -150,7 +150,10 @@ def test_full_success_publishes_everywhere_and_records_usage(world):
     assert "작업 전(좌) · 작업 후(우)" in html_body
     assert "작업후 첫 사진 설명" in html_body
     assert labels[0] == "로프청소"
-    assert len(drive.public) == 8
+    assert len(drive.public) == 8 + 1  # 사진·이미지 8 + 이번 글의 영상
+    video_id = next(i for i in drive.public if drive.items[i]["name"].endswith(".mp4"))
+    assert drive.items[video_id]["parent"] == layout.public_folder_id
+    assert f"https://drive.google.com/file/d/{video_id}/preview" in html_body
 
     slides, bgm_path, seconds = fake_video.calls[0]
     assert len(slides) == 5 + 2  # 사진 5 + 전후비교 + 푸터
@@ -277,12 +280,30 @@ def test_video_failure_only_fails_tiktok(world):
 
     assert code == 0
     assert blogger.calls and naver.calls
+    assert "<iframe" not in blogger.calls[0][1]  # 영상이 없으면 글에도 넣지 않음
     assert tiktok.calls == []
     ts = _progress_ts(client)
     assert "❌ *틱톡*\n영상 생성 실패: ffmpeg crashed" in _report(client, ts)
     assert "틱톡 영상" not in _upload_titles(client, ts)  # 업로드할 영상이 없음
     assert "❌ 틱톡 영상 제작 — 영상 생성 실패: ffmpeg crashed" in _checklist(client, ts)
     assert _post_counts(drive, photos) == {1}
+
+
+def test_video_upload_failure_still_publishes_blog_without_video(world):
+    drive, layout, photos, cfg, client = world
+    original_upload = drive.upload
+
+    def upload(parent_id, local_path, name=None, mime_type=None):
+        if local_path.suffix == ".mp4":
+            raise RuntimeError("drive quota exceeded")
+        return original_upload(parent_id, local_path, name, mime_type)
+
+    drive.upload = upload
+    blogger = FakeBlogger()
+    code = run_post(cfg, RunOptions(), _services(drive, client, blogger=blogger))
+
+    assert code == 0
+    assert blogger.calls and "<iframe" not in blogger.calls[0][1]
 
 
 def test_partial_usage_record_failure_still_reports_results(world):

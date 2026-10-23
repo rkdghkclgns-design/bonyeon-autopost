@@ -77,6 +77,26 @@ def test_image_url_attribute_is_escaped():
     assert '"onerror="' not in html
 
 
+def test_video_is_embedded_after_outro_before_footer():
+    html = build_blog_html(_content(), {"작업후": ["https://img/a"]}, footer_url="https://img/footer",
+                           video_url="https://drive.google.com/file/d/vid/preview")
+    # 맺음말 → 영상(소제목 + 플레이어) → 상담 문의 배너
+    order = [html.index(s) for s in ("상담은", "영상으로 보는 작업 과정", "file/d/vid/preview", "img/footer")]
+    assert order == sorted(order)
+    assert html.count("<iframe") == 1
+
+
+def test_no_video_block_without_video():
+    html = build_blog_html(_content(), {"작업후": ["https://img/a"]})
+    assert "<iframe" not in html
+    assert "영상으로 보는 작업 과정" not in html
+
+
+def test_video_url_attribute_is_escaped():
+    html = build_blog_html(_content(), {}, video_url='https://x/"onload="y')
+    assert '"onload="' not in html
+
+
 def test_build_labels_limits_and_dedupes():
     labels = build_labels("로프청소", ["#로프청소", "#외벽", "#외벽", "#a", "#b", "#c", "#d"])
     assert labels == ["로프청소", "외벽", "a", "b", "c", "d"]

@@ -25,6 +25,7 @@ QUOTE_STYLE = (
     "border-top:2px solid #146c94;border-bottom:2px solid #146c94;font-size:1.15em;"
 )
 COMPARISON_CAPTION = "작업 전(좌) · 작업 후(우)"
+VIDEO_HEADING = "영상으로 보는 작업 과정"
 
 
 def tips_heading(content: PostContent) -> str:
@@ -54,6 +55,17 @@ def _img(url: str, alt: str) -> str:
     )
 
 
+def _video(url: str) -> str:
+    """세로(9:16) 영상 플레이어 — 화면 폭에 맞춰 줄어들고 PC 에서는 휴대폰 화면 크기로 보인다."""
+    return (
+        '<div style="max-width:360px;margin:28px auto 12px;">'
+        '<div style="position:relative;padding-top:177.78%;">'
+        f'<iframe src="{html.escape(url, quote=True)}" title="{html.escape(VIDEO_HEADING, quote=True)}" '
+        'style="position:absolute;top:0;left:0;width:100%;height:100%;border:0;border-radius:8px;" '
+        'allow="autoplay; fullscreen" allowfullscreen loading="lazy"></iframe></div></div>'
+    )
+
+
 def _section_html(stage: str, urls: Sequence[str], section) -> list[str]:
     heading = section.heading if section else STAGE_LABELS[stage]
     parts = [f'<h3 style="{QUOTE_STYLE}">“ {html.escape(heading)} ”</h3>']
@@ -74,6 +86,7 @@ def build_blog_html(
     footer_url: str | None = None,
     comparison_url: str | None = None,
     review_urls: Sequence[str] = (),
+    video_url: str | None = None,
 ) -> str:
     parts: list[str] = []
     if header_url:
@@ -98,6 +111,9 @@ def build_blog_html(
         parts.append(f'<h3 style="{QUOTE_STYLE}">“ {html.escape(tips_heading(content))} ”</h3>')
         parts.append(_paragraphs(content.tips))
     parts.append(_paragraphs(content.outro))
+    if video_url:  # 이번 글을 위해 만든 영상 — 글 마지막, 상담 문의 배너 앞
+        parts.append(f'<h3 style="{QUOTE_STYLE}">“ {html.escape(VIDEO_HEADING)} ”</h3>')
+        parts.append(_video(video_url))
     if footer_url:
         parts.append(_img(footer_url, "상담 문의 안내"))
     parts.append(f'<p style="text-align:center;color:#1a73e8;">{html.escape(" ".join(content.hashtags))}</p>')

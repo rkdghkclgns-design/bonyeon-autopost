@@ -8,6 +8,7 @@ from autopost.drive_helper import (
     escape_query_value,
     folder_url,
     public_image_url,
+    public_video_embed_url,
 )
 from fakes import FakeDownloader, FakeDriveService
 
@@ -29,6 +30,7 @@ def test_build_query_combines_clauses():
 def test_urls():
     assert folder_url("abc") == "https://drive.google.com/drive/folders/abc"
     assert public_image_url("xyz", 800) == "https://lh3.googleusercontent.com/d/xyz=w800"
+    assert public_video_embed_url("vid") == "https://drive.google.com/file/d/vid/preview"
 
 
 def test_ensure_folder_is_idempotent():

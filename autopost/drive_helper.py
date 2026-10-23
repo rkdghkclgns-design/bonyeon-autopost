@@ -83,6 +83,11 @@ def public_image_url(file_id: str, width: int = 1600) -> str:
     return f"https://lh3.googleusercontent.com/d/{file_id}=w{width}"
 
 
+def public_video_embed_url(file_id: str) -> str:
+    """'링크가 있는 모든 사용자' 공개 동영상의 드라이브 플레이어 주소 (블로그 글에 iframe 으로 삽입)."""
+    return f"https://drive.google.com/file/d/{file_id}/preview"
+
+
 class DriveHelper:
     def __init__(self, service) -> None:
         self._service = service

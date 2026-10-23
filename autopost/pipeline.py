@@ -28,7 +28,7 @@ from .constants import (
     STAGE_LABELS,
     STAGES,
 )
-from .drive_helper import DriveFile, DriveHelper, folder_url, public_image_url
+from .drive_helper import DriveFile, DriveHelper, folder_url, public_image_url, public_video_embed_url
 from .image_wash import wash_all
 from .naver_publisher import NaverPublisher
 from .photo_selector import PhotoSelection, UnknownCategoryError, last_posted_at, select_photos, usage_order
@@ -176,6 +176,19 @@ def _build_slides(
     return slides
 
 
+def _public_video_url(drive: DriveHelper, folder_id: str, video_path: Path | None, name: str) -> str | None:
+    """이번 글에 넣을 영상을 공개로 올린다 — 실패하면 글은 영상 없이 발행한다."""
+    if video_path is None:
+        return None
+    try:
+        uploaded = drive.upload(folder_id, video_path, name=name, mime_type="video/mp4")
+        drive.make_public(uploaded.id)
+        return public_video_embed_url(uploaded.id)
+    except Exception:
+        log.exception("블로그용 영상 업로드 실패 — 영상 없이 발행합니다")
+        return None
+
+
 def _publish_blogger(
     services: Services,
     layout: DriveLayout,
@@ -184,11 +197,15 @@ def _publish_blogger(
     assets: CommonAssets,
     category: str,
     stamp: str,
+    video_path: Path | None = None,
 ) -> PublishResult:
     drive = services.drive
 
+    def public_name(path: Path) -> str:
+        return f"{stamp}_{category}_{path.name}"
+
     def upload_public(path: Path) -> str:
-        uploaded = drive.upload(layout.public_folder_id, path, name=f"{stamp}_{category}_{path.name}")
+        uploaded = drive.upload(layout.public_folder_id, path, name=public_name(path))
         drive.make_public(uploaded.id)
         return public_image_url(uploaded.id)
 
@@ -201,8 +218,11 @@ def _publish_blogger(
     urls_by_stage = {stage: tuple(upload_public(p) for p in media.photos.get(stage, ())) for stage in STAGES}
     comparison_url = upload_public(media.comparison) if media.comparison else None
     review_urls = tuple(upload_public(p) for p in media.reviews)
+    video_url = _public_video_url(
+        drive, layout.public_folder_id, video_path, public_name(video_path) if video_path else "")
     html_body = build_blog_html(
-        content, urls_by_stage, public(assets.header), public(assets.footer), comparison_url, review_urls
+        content, urls_by_stage, public(assets.header), public(assets.footer), comparison_url, review_urls,
+        video_url=video_url,
     )
     return services.blogger.publish(content.title, html_body, build_labels(category, content.hashtags))
 
@@ -283,7 +303,7 @@ def _publish_all(
         results.append(PublishResult.skip(blog_publisher.PLATFORM, "BLOGGER_BLOG_ID 미설정"))
     else:
         results.append(_safely(blog_publisher.PLATFORM, lambda: _publish_blogger(
-            services, layout, content, media, assets, category, stamp)))
+            services, layout, content, media, assets, category, stamp, video_path)))
 
     if only and "naver" not in only:
         results.append(PublishResult.skip(naver_publisher.PLATFORM, excluded))
